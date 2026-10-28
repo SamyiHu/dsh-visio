@@ -434,6 +434,20 @@ class Vsdx:
         }
         return self.set_cells(shape_id, update, page)
 
+    def move_label(self, shape_id, dx=0.0, dy=0.0, page: int = 1):
+        """Move a text block without moving the shape or its endpoints."""
+        det = self.shape(shape_id, page)
+        c = det["cells"]
+        try:
+            cur_x = float(c["TxtPinX"]) if c.get("TxtPinX") is not None else float(c.get("LocPinX") or 0)
+            cur_y = float(c["TxtPinY"]) if c.get("TxtPinY") is not None else float(c.get("LocPinY") or 0)
+        except (TypeError, ValueError):
+            raise VsdxError("shape %s has no text block" % shape_id)
+        return self.set_cells(shape_id, {
+            "TxtPinX": round(cur_x + float(dx), 6),
+            "TxtPinY": round(cur_y + float(dy), 6),
+        }, page)
+
     def set_prop(self, shape_id, name: str, value, page: int = 1):
         part, root = self._page_root(page)
         for sh, _p, _d in self._iter_shapes(root.find(_v("Shapes"))):
@@ -1559,10 +1573,22 @@ class Vsdx:
                        'vector-effect="non-scaling-stroke" pointer-events="stroke"/>' % d)
             if s["text"]:
                 mx, my = (x1 + x2) / 2.0, H - (y1 + y2) / 2.0
+                if c.get("TxtPinX") is not None and c.get("TxtPinY") is not None:
+                    try:
+                        mx = float(c["TxtPinX"]) + float(c.get("PinX") or 0) - float(c.get("LocPinX") or 0)
+                        my = H - (float(c["TxtPinY"]) + float(c.get("PinY") or 0) - float(c.get("LocPinY") or 0))
+                    except (TypeError, ValueError):
+                        pass
                 label = [ln for ln in s["text"].split("\n") if ln.strip()][:4]
+                runs = self.text_runs(s["id"], page) or []
                 for i, ln in enumerate(label):
-                    out.append('<text x="%0.3f" y="%0.3f" font-size="0.08" fill="#1A1A1A" text-anchor="middle">%s</text>'
-                               % (mx, my + (i - (len(label) - 1) / 2.0) * 0.105, _esc(ln[:60])))
+                    fill = cst.get("text") or "#1A1A1A"
+                    for run_text, run_color in runs:
+                        if run_text.strip() and run_text.strip() == ln.strip() and run_color:
+                            fill = run_color
+                            break
+                    out.append('<text x="%0.3f" y="%0.3f" font-size="0.08" fill="%s" text-anchor="middle">%s</text>'
+                               % (mx, my + (i - (len(label) - 1) / 2.0) * 0.105, fill, _esc(ln[:60])))
             out.append("</g>")
         out.append("</svg>")
         _k = 0

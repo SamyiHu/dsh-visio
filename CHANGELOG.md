@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.15.1
+- Dragging a connector label moves only the text block (`TxtPinX/TxtPinY`); the line keeps
+  its endpoints.
+- Connector labels resolve their colour like any other text (Character runs / style / theme)
+  instead of a hardcoded grey.
+
+
 ## 1.15.0
 - Connectors move by their endpoints: dragging a connector (or its label) no longer
   rewrites Width/Height, which used to collapse the line.

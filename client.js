@@ -968,9 +968,15 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         drag.moved = true
         drag.dx = dxPx / drag.scale
         drag.dy = dyPx / drag.scale
-        drag.node.setAttribute('transform',
-          `translate(${(drag.base.x + drag.dx).toFixed(4)} ${(drag.base.y + drag.dy).toFixed(4)})`)
-        drag.node.style.opacity = '0.85'
+        const label = drag.isConn && drag.textNode
+        if (label) {
+          drag.textNode.setAttribute('transform',
+            `translate(${drag.dx.toFixed(4)} ${(-drag.dy).toFixed(4)})`)
+        } else {
+          drag.node.setAttribute('transform',
+            `translate(${(drag.base.x + drag.dx).toFixed(4)} ${(drag.base.y + drag.dy).toFixed(4)})`)
+          drag.node.style.opacity = '0.85'
+        }
         const tip = tipRef.current
         if (tip && tip.parentElement) {
           const box = tip.parentElement.getBoundingClientRect()
@@ -993,10 +999,21 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         drag.node.style.opacity = ''
         if (!drag.moved) {
           drag.node.removeAttribute('transform')
+          if (drag.textNode) drag.textNode.removeAttribute('transform')
           return
         }
         const current = docRef.current
         if (!current) return
+        if (drag.isConn && drag.textNode) {
+          runOp({
+            action: 'move_label', path: current.path, page: current.page, shape_id: drag.id,
+            dx: Math.round(drag.dx * 1000) / 1000, dy: Math.round(-drag.dy * 1000) / 1000,
+          }, { quiet: true }).then((saved) => {
+            if (drag.textNode) drag.textNode.removeAttribute('transform')
+            return saved
+          })
+          return
+        }
         const pageSize = current.pageSize || { w: 11, h: 8.5 }
         const x = Math.round(Math.min(Math.max(0, drag.bbox.x + drag.dx), Math.max(0, pageSize.w - drag.bbox.w)) * 1000) / 1000
         const y = Math.round(Math.min(Math.max(0, drag.bbox.y - drag.dy), Math.max(0, pageSize.h - drag.bbox.h)) * 1000) / 1000
@@ -1067,6 +1084,9 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           startX: event.clientX, startY: event.clientY,
           base: matched ? { x: Number(matched[1]), y: Number(matched[2]) } : { x: 0, y: 0 },
           scale, dx: 0, dy: 0, moved: false,
+          isConn: !!target.connector,
+          onText: event.target instanceof Element && event.target.tagName.toLowerCase() === 'text',
+          textNode: event.target instanceof Element && event.target.tagName.toLowerCase() === 'text' ? event.target : null,
         }
         window.addEventListener('pointermove', moveDrag)
         window.addEventListener('pointerup', upDrag)

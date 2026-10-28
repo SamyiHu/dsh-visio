@@ -686,6 +686,21 @@ def list_kinds():
         return []
 
 
+def action_move_label(req):
+    path = drawing_path(req.get("path"))
+    doc = load_doc(path)
+    page = page_of(req.get("page"), doc.pages)
+    sid = text(req.get("shape_id"), "shape_id", 40)
+    dx = number(req.get("dx") or 0, "dx")
+    dy = number(req.get("dy") or 0, "dy")
+    doc.move_label(sid, dx=dx, dy=dy, page=page)
+    save_doc(doc, req.get("backup", True))
+    if req.get("light"):
+        return {"ok": True, "saved": True, "notice": "文字位置已保存",
+                "mtime": os.path.getmtime(path), "shape_id": sid, **_history_state(path)}
+    return build_state(path, page, sid, notice="文字位置已保存", saved=True)
+
+
 ACTIONS = {
     "ping": action_ping,
     "list": action_list,
@@ -710,6 +725,7 @@ ACTIONS = {
     "delete": action_delete,
     "normalize": action_normalize,
     "export": action_export,
+    "move_label": action_move_label,
     "validate": action_validate,
     "stencil_info": action_stencil_info,
     "stencil_sheet": action_stencil_sheet,
