@@ -428,13 +428,17 @@ const TOOL_PARAMETERS = {
   properties: {
     action: {
       type: 'string',
-      enum: ['open', 'text', 'get_shape', 'create', 'list', 'set_text', 'set_cell', 'set_prop', 'add_shape', 'connect', 'delete', 'normalize', 'export'],
+      enum: ['open', 'text', 'get_shape', 'create', 'list', 'set_text', 'set_cell', 'set_prop',
+        'add_shape', 'move', 'connect', 'delete', 'validate', 'kinds', 'stencils',
+        'stencil_add', 'undo', 'redo', 'normalize', 'export'],
       description:
         'open reads a drawing (pages, page size, shapes with ids/text/bbox, and a text outline); '
         + 'text dumps every page as markdown; get_shape returns every ShapeSheet cell of one shape; '
         + 'list lists .vsdx/.vsdm files in a folder; create builds a new blank drawing; '
-        + 'set_text / set_cell / set_prop / add_shape / connect / delete modify the file in place; '
-        + 'export writes an SVG or PNG preview.',
+        + 'set_text / set_cell / set_prop / add_shape / move / connect / delete modify the file in place; '
+        + 'validate audits relationships (empty links, floating endpoints, dangling ids); '
+        + 'kinds lists the 16 built-in shape kinds; stencils / stencil_add import a .vssx/.vstx master; '
+        + 'undo / redo step through the edit history (25 steps); export writes an SVG or PNG preview.',
     },
     path: { type: 'string', description: 'Absolute path to the .vsdx/.vsdm file.' },
     page: { type: 'integer', description: '1-based page number; defaults to 1.' },
@@ -443,7 +447,15 @@ const TOOL_PARAMETERS = {
     cell: { type: 'string', description: 'ShapeSheet cell name for set_cell, e.g. FillForegnd, LineColor, LineWeight, PinX, Width.' },
     name: { type: 'string', description: 'Shape-data property name for set_prop.' },
     value: { type: 'string', description: 'Cell or property value for set_cell/set_prop (colors as #RRGGBB).' },
-    kind: { type: 'string', enum: ['rect', 'ellipse', 'line', 'text'], description: 'Shape kind for add_shape.' },
+    kind: {
+      type: 'string',
+      enum: ['rect', 'roundrect', 'terminator', 'ellipse', 'diamond', 'triangle', 'parallelogram',
+        'trapezoid', 'hexagon', 'chevron', 'arrow_right', 'arrow_left', 'arrow_up', 'arrow_down',
+        'text', 'line'],
+      description: 'Shape kind for add_shape (see action=kinds for the full list).',
+    },
+    stencil: { type: 'string', description: 'Path to a .vssx/.vstx stencil for stencil_add.' },
+    master: { type: 'string', description: 'Master name or 0-based index inside the stencil.' },
     x: { type: 'number', description: 'Left edge in inches (origin bottom-left) for add_shape.' },
     y: { type: 'number', description: 'Bottom edge in inches for add_shape.' },
     w: { type: 'number', description: 'Width in inches for add_shape.' },
@@ -592,6 +604,48 @@ function registerAgentTool(ctx, config) {
           const state = await runBridge(config, { action: 'normalize', path: args.path, page: args.page })
           return { text: `${state?.notice ?? 'units normalised'}
 ${formatState(state)}`.trim() }
+        }
+        if (action === 'validate') {
+          const result = await runBridge(config, { action: 'validate', path: args.path, page: args.page })
+          const lines = result.issues.map((item) =>
+            [item.level.toUpperCase(), item.code, '#' + item.shape, item.message].join(' | '))
+          const head = [
+            'errors ' + result.counts.error + ', warnings ' + result.counts.warn + ', info ' + result.counts.info,
+            'shapes ' + result.shapes + ', connectors ' + result.connectors,
+          ]
+          return { text: head.concat(lines).join(String.fromCharCode(10)) }
+        }
+        if (action === 'kinds') {
+          const result = await runBridge(config, { action: 'kinds' })
+          const rows = (result.kinds || []).map((k) => String(k))
+          return { text: rows.join(String.fromCharCode(10)) }
+        }
+        if (action === 'stencils') {
+          const result = await runBridge(config, { action: 'stencils', path: args.path, page: args.page })
+          const rows = (result.stencils || []).map((st) => [st.name, st.count || ''].join(' | '))
+          return { text: rows.join(String.fromCharCode(10)) }
+        }
+        if (action === 'stencil_add') {
+          const state = await runBridge(config, {
+            action: 'stencil_add', path: args.path, page: args.page,
+            stencil: args.stencil, master: args.master, x: args.x ?? 1, y: args.y ?? 1,
+          })
+          return { text: (state.notice || 'master inserted') + String.fromCharCode(10) + String.fromCharCode(10) + formatState(state) }
+        }
+        if (action === 'move') {
+          const state = await runBridge(config, {
+            action: 'move', path: args.path, page: args.page, shape_id: args.shape_id,
+            x: args.x, y: args.y, w: args.w, h: args.h,
+          })
+          return { text: `${state.notice}
+
+${formatState(state)}` }
+        }
+        if (action === 'undo' || action === 'redo') {
+          const state = await runBridge(config, { action, path: args.path, page: args.page })
+          return { text: `${state.notice ?? action}
+
+${formatState(state)}` }
         }
         if (action === 'export') {
           const result = await runBridge(config, {
