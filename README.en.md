@@ -12,6 +12,8 @@ English · [简体中文](README.md)
 ![license](https://img.shields.io/badge/license-MIT-blue)
 ![engine](https://img.shields.io/badge/engine-python--stdlib-green)
 
+![panel](docs/panel.png)
+
 ![demo](docs/demo-p1.png)
 
 > Rendered by the plugin's own renderer (`snapshot`); the source is `examples/demo.vsdx`.
