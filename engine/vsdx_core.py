@@ -1565,7 +1565,23 @@ class Vsdx:
                        'marker-end="%s" stroke-linejoin="round"/>'
                        % (d, line_color, width_attr, marker_start, marker))
             else:
-                d = "M %0.4f %0.4f L %0.4f %0.4f" % (x1, H - y1, x2, H - y2)
+                # Visio routes a dynamic connector at right angles; a straight diagonal
+                # across the page is what the file stores, not what Visio shows.
+                name_u = str(det.get("name") or "").lower()
+                dynamic = "dynamic" in name_u
+                dx_, dy_ = x2 - x1, y2 - y1
+                if dynamic and abs(dx_) > 0.02 and abs(dy_) > 0.02:
+                    if abs(dx_) >= abs(dy_):
+                        mx_ = (x1 + x2) / 2.0
+                        pts2 = [(x1, y1), (mx_, y1), (mx_, y2), (x2, y2)]
+                    else:
+                        my_ = (y1 + y2) / 2.0
+                        pts2 = [(x1, y1), (x1, my_), (x2, my_), (x2, y2)]
+                    d = "M %0.4f %0.4f" % (pts2[0][0], H - pts2[0][1])
+                    for px, py in pts2[1:]:
+                        d += " L %0.4f %0.4f" % (px, H - py)
+                else:
+                    d = "M %0.4f %0.4f L %0.4f %0.4f" % (x1, H - y1, x2, H - y2)
                 out.append('<path d="%s" fill="none" stroke="%s" %s marker-end="%s"/>'
                            % (d, line_color, width_attr, marker))
             # fat, invisible target so a 0.01in line can be clicked

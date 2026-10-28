@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.16.1
+- Dynamic connectors are drawn with **right-angle routing**, the way Visio shows them,
+  instead of the straight diagonal stored in the file.
+- `validate` also reports connectors that **run through an unrelated shape** — before, it
+  only checked that Connect rows existed, so a visibly broken page could still pass.
+
+
 ## 1.15.3
 - The inspector has an **occlusion** switch for the text block (`TextBkgnd`): on = an opaque
   white block behind the text, so lines underneath are hidden.

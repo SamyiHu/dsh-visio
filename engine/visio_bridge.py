@@ -564,6 +564,29 @@ def action_validate(req):
                 x2, y2 = float(cells["EndX"]), float(cells["EndY"])
             except (TypeError, ValueError):
                 continue
+            # A connector that runs through an unrelated shape looks broken to a reader
+            # even though every Connect row is present - report it.
+            ends = {str(c['to']) for c in conns}
+            route = [(x1, y1), (x2, y2)]
+            if abs(x2 - x1) > 0.02 and abs(y2 - y1) > 0.02:
+                if abs(x2 - x1) >= abs(y2 - y1):
+                    mx_ = (x1 + x2) / 2.0
+                    route = [(x1, y1), (mx_, y1), (mx_, y2), (x2, y2)]
+                else:
+                    my_ = (y1 + y2) / 2.0
+                    route = [(x1, y1), (x1, my_), (x2, my_), (x2, y2)]
+            for i in range(len(route) - 1):
+                ax, ay = route[i]
+                bx, by = route[i + 1]
+                for o in shapes:
+                    if o['connector'] or o['type'] == 'Guide' or o['id'] in ends:
+                        continue
+                    if _segment_hits_box(ax, ay, bx, by, o['bbox'], 0.02):
+                        label_ = (o.get('text') or '').split('|')[0][:12] or '无文字'
+                        add('warn', 'connector-crosses-shape', sid,
+                            '连接线穿过形状 #%s（%s）' % (o['id'], label_),
+                            '调整形状位置或缩短连线')
+                        break
             for label, (px, py) in (("起点", (x1, y1)), ("终点", (x2, y2))):
                 if not any(_point_in_box(px, py, o["bbox"], 0.12) for o in shapes if not o["connector"] and o["type"] != "Guide"):
                     add("warn", "connector-floating-%s" % ("start" if label == "起点" else "end"),
@@ -576,6 +599,21 @@ def action_validate(req):
     return {"ok": True, "path": path, "page": page, "counts": counts,
             "issues": issues, "shapes": len(shapes),
             "connectors": len([s for s in shapes if s["connector"]])}
+
+
+def _segment_hits_box(x1, y1, x2, y2, box, pad=0.0, steps=24):
+    """True when the segment passes through the box (sampled, good enough for a warning)."""
+    bx1, by1 = box["x"] + pad, box["y"] + pad
+    bx2, by2 = box["x"] + box["w"] - pad, box["y"] + box["h"] - pad
+    if bx2 <= bx1 or by2 <= by1:
+        return False
+    for k in range(1, steps):
+        t = k / float(steps)
+        x = x1 + (x2 - x1) * t
+        y = y1 + (y2 - y1) * t
+        if bx1 <= x <= bx2 and by1 <= y <= by2:
+            return True
+    return False
 
 
 def _point_in_box(x, y, box, pad=0.0):
