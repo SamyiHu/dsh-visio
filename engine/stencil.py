@@ -242,3 +242,91 @@ def add_instance(doc, master_id, page=1, x=None, y=None, w=None, h=None, text=""
     h = float(h) if h else mh
     rows = _master_rows(doc, master_id)
     return doc.add_master_shape(str(master_id), page=page, x=x, y=y, w=w, h=h, text=text, rows=rows)
+
+
+def _master_el(path, master_id):
+    with zipfile.ZipFile(path) as zf:
+        root = ET.fromstring(_read(zf, "visio/masters/masters.xml"))
+        rels = _parse_rels(_read(zf, "visio/masters/_rels/masters.xml.rels"))
+        for el in root.findall(NS + "Master"):
+            if master_id not in (None, "", str(el.get("ID"))) and master_id not in (
+                    el.get("NameU"), el.get("Name")):
+                continue
+            part = rels.get(_master_rel_id(el))
+            if not part:
+                continue
+            body = ET.fromstring(_read(zf, "visio/masters/" + part))
+            return el, body
+    raise StencilError("master not found: %s" % master_id)
+
+
+def master_detail(path, master_id=None):
+    """Name, description, size and text of every master (or just one)."""
+    with zipfile.ZipFile(path) as zf:
+        root = ET.fromstring(_read(zf, "visio/masters/masters.xml"))
+        rels = _parse_rels(_read(zf, "visio/masters/_rels/masters.xml.rels"))
+        out = []
+        for el in root.findall(NS + "Master"):
+            if master_id and master_id not in (str(el.get("ID")), el.get("NameU"), el.get("Name")):
+                continue
+            part = rels.get(_master_rel_id(el))
+            body = ET.fromstring(_read(zf, "visio/masters/" + part)) if part else None
+            w = h = None
+            text = ""
+            shapes = 0
+            if body is not None:
+                for sh in body.iter(NS + "Shape"):
+                    shapes += 1
+                    if not text:
+                        t = sh.find(NS + "Text")
+                        if t is not None and t.text:
+                            text = t.text.strip()[:120]
+                    for cell in sh.findall(NS + "Cell"):
+                        if cell.get("N") == "Width" and w is None:
+                            w = float(cell.get("V") or 0)
+                        elif cell.get("N") == "Height" and h is None:
+                            h = float(cell.get("V") or 0)
+            out.append({
+                "id": el.get("ID"),
+                "name": el.get("NameU") or el.get("Name") or "Master",
+                "prompt": el.get("Prompt") or el.get("Description") or "",
+                "keywords": el.get("Keywords") or "",
+                "icon": el.get("Icon") == "1",
+                "shapes": shapes,
+                "width": w,
+                "height": h,
+                "text": text,
+            })
+    return out
+
+
+def master_outline(path, master_id):
+    """Polygon points (inches, origin bottom-left) of a master's first shape."""
+    el, body = _master_el(path, master_id)
+    sh = body.find(NS + "Shapes/" + NS + "Shape") if body.find(NS + "Shapes") is not None else None
+    if sh is None:
+        raise StencilError("master has no shape: %s" % master_id)
+    w = h = 0.0
+    for cell in sh.findall(NS + "Cell"):
+        if cell.get("N") == "Width":
+            w = float(cell.get("V") or 0)
+        elif cell.get("N") == "Height":
+            h = float(cell.get("V") or 0)
+    pts = []
+    for sec in sh.findall(NS + "Section"):
+        if sec.get("N") != "Geometry":
+            continue
+        for row in sec.findall(NS + "Row"):
+            x = y = None
+            for cell in row.findall(NS + "Cell"):
+                if cell.get("N") == "X":
+                    x = float(cell.get("V") or 0)
+                elif cell.get("N") == "Y":
+                    y = float(cell.get("V") or 0)
+            if x is None or y is None:
+                continue
+            if (row.get("T") or "").startswith("Rel"):
+                pts.append((x * w, y * h))
+            else:
+                pts.append((x, y))
+    return w, h, pts

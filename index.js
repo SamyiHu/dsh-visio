@@ -430,14 +430,17 @@ const TOOL_PARAMETERS = {
       type: 'string',
       enum: ['open', 'text', 'get_shape', 'create', 'list', 'set_text', 'set_cell', 'set_prop',
         'add_shape', 'move', 'connect', 'delete', 'validate', 'kinds', 'stencils',
-        'stencil_add', 'undo', 'redo', 'normalize', 'export'],
+        'stencil_add', 'stencil_info', 'stencil_sheet', 'snapshot', 'capabilities',
+        'undo', 'redo', 'normalize', 'export'],
       description:
         'open reads a drawing (pages, page size, shapes with ids/text/bbox, and a text outline); '
         + 'text dumps every page as markdown; get_shape returns every ShapeSheet cell of one shape; '
         + 'list lists .vsdx/.vsdm files in a folder; create builds a new blank drawing; '
         + 'set_text / set_cell / set_prop / add_shape / move / connect / delete modify the file in place; '
         + 'validate audits relationships (empty links, floating endpoints, dangling ids); '
-        + 'kinds lists the 16 built-in shape kinds; stencils / stencil_add import a .vssx/.vstx master; '
+        + 'kinds lists the 16 built-in shape kinds; stencils / stencil_info / stencil_sheet / stencil_add '
+        + 'list, describe, contact-sheet and import a .vssx/.vstx master; '
+        + 'snapshot renders every page to PNG; capabilities lists this surface; '
         + 'undo / redo step through the edit history (25 steps); export writes an SVG or PNG preview.',
     },
     path: { type: 'string', description: 'Absolute path to the .vsdx/.vsdm file.' },
@@ -456,6 +459,9 @@ const TOOL_PARAMETERS = {
     },
     stencil: { type: 'string', description: 'Path to a .vssx/.vstx stencil for stencil_add.' },
     master: { type: 'string', description: 'Master name or 0-based index inside the stencil.' },
+    file: { type: 'string', description: 'Path to a .vssx/.vstx stencil for stencil_info / stencil_sheet / stencils.' },
+    all: { type: 'boolean', description: 'snapshot: render every page (default: current page only).' },
+    dpi: { type: 'number', description: 'snapshot: pixels per inch (default 110).' },
     x: { type: 'number', description: 'Left edge in inches (origin bottom-left) for add_shape.' },
     y: { type: 'number', description: 'Bottom edge in inches for add_shape.' },
     w: { type: 'number', description: 'Width in inches for add_shape.' },
@@ -620,9 +626,35 @@ ${formatState(state)}`.trim() }
           const rows = (result.kinds || []).map((k) => String(k))
           return { text: rows.join(String.fromCharCode(10)) }
         }
+        if (action === 'capabilities') {
+          const result = await runBridge(config, { action: 'capabilities' })
+          const rows = [
+            'actions: ' + (result.actions || []).join(', '),
+            'kinds: ' + (result.kinds || []).join(', '),
+          ]
+          return { text: rows.join(String.fromCharCode(10)) }
+        }
+        if (action === 'stencil_info') {
+          const result = await runBridge(config, { action: 'stencil_info', file: args.file, master: args.master })
+          const rows = (result.masters || []).map((m) => [
+            '#' + m.id, m.name, m.prompt || '-', (m.width || '?') + 'x' + (m.height || '?') + 'in',
+            m.shapes + ' shape(s)', m.text || '',
+          ].join(' | '))
+          return { text: [result.file, result.count + ' master(s)'].concat(rows).join(String.fromCharCode(10)) }
+        }
+        if (action === 'stencil_sheet') {
+          const result = await runBridge(config, { action: 'stencil_sheet', file: args.file, out: args.out })
+          return { text: 'contact sheet: ' + result.out + ' (' + result.masters + ' masters)' }
+        }
+        if (action === 'snapshot') {
+          const result = await runBridge(config, {
+            action: 'snapshot', path: args.path, page: args.page, all: args.all === true, dpi: args.dpi, out: args.out,
+          })
+          return { text: ['rendered ' + result.pages + ' page(s):'].concat(result.files).join(String.fromCharCode(10)) }
+        }
         if (action === 'stencils') {
-          const result = await runBridge(config, { action: 'stencils', path: args.path, page: args.page })
-          const rows = (result.stencils || []).map((st) => [st.name, st.count || ''].join(' | '))
+          const result = await runBridge(config, { action: 'stencil_list', file: args.file || args.path })
+          const rows = (result.masters || []).map((m) => '#' + m.id + ' ' + m.name)
           return { text: rows.join(String.fromCharCode(10)) }
         }
         if (action === 'stencil_add') {

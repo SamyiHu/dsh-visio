@@ -583,6 +583,109 @@ def _point_in_box(x, y, box, pad=0.0):
            (box["y"] - pad) <= y <= (box["y"] + box["h"] + pad)
 
 
+
+def _sheet_png(masters, out_path, cols=4, tile=220):
+    """Contact sheet: every master drawn in its own tile, labelled."""
+    from PIL import Image, ImageDraw, ImageFont
+    rows = max(1, (len(masters) + cols - 1) // cols)
+    pad = 14
+    W = cols * tile + pad * 2
+    H = rows * (tile + 26) + pad * 2
+    img = Image.new("RGB", (W, H), "#FFFFFF")
+    draw = ImageDraw.Draw(img)
+    try:
+        font = ImageFont.truetype(r"C:\Windows\Fonts\msyh.ttc", 13)
+    except OSError:
+        font = ImageFont.load_default()
+    for i, (name, w, h, pts) in enumerate(masters):
+        cx = pad + (i % cols) * tile
+        cy = pad + (i // cols) * (tile + 26)
+        draw.rectangle([cx, cy, cx + tile - 8, cy + tile - 8], outline="#D0D5DD")
+        if not pts:
+            continue
+        span_x = max(w, 0.001)
+        span_y = max(h, 0.001)
+        sc = min((tile - 40) / span_x, (tile - 40) / span_y)
+        ox = cx + (tile - 8 - span_x * sc) / 2.0
+        oy = cy + (tile - 8 - span_y * sc) / 2.0
+        poly = [(ox + px * sc, oy + (h - py) * sc) for px, py in pts]
+        draw.polygon(poly, fill="#EDF2FB", outline="#355694")
+        draw.text((cx + 6, cy + tile - 2), name[:26], fill="#1A1A1A", font=font)
+    img.save(out_path)
+    return out_path
+
+
+def action_stencil_info(req):
+    import stencil
+    file = text(req.get("file"), "file", 1000).strip()
+    if not file:
+        raise BadRequest("file is required (path to a .vssx/.vstx)")
+    if not os.path.isabs(file):
+        file = os.path.abspath(file)
+    master = text(req.get("master"), "master", 60).strip() or None
+    masters = stencil.master_detail(file, master)
+    return {"ok": True, "file": file, "count": len(masters), "masters": masters}
+
+
+def action_stencil_sheet(req):
+    import stencil
+    file = text(req.get("file"), "file", 1000).strip()
+    if not os.path.isabs(file):
+        file = os.path.abspath(file)
+    out = text(req.get("out"), "out", 1000).strip()
+    if not out:
+        out = os.path.splitext(file)[0] + "-sheet.png"
+    masters = stencil.master_detail(file)
+    tiles = []
+    for m in masters:
+        try:
+            w, h, pts = stencil.master_outline(file, m["id"])
+        except Exception:            # a master without simple geometry still gets a tile
+            w, h, pts = 1.0, 1.0, []
+        tiles.append((m["name"], w or 1.0, h or 1.0, pts))
+    _sheet_png(tiles, out)
+    return {"ok": True, "file": file, "out": out, "masters": len(tiles)}
+
+
+def action_snapshot(req):
+    path = drawing_path(req.get("path"))
+    doc = load_doc(path)
+    pages = list(range(1, len(doc.pages) + 1)) if req.get("all") else [page_of(req.get("page"), doc.pages)]
+    out_dir = text(req.get("out"), "out", 1000).strip()
+    if out_dir and not os.path.isabs(out_dir):
+        out_dir = os.path.join(os.path.dirname(path), out_dir)
+    if not out_dir:
+        out_dir = os.path.join(os.path.dirname(path), "preview")
+    os.makedirs(out_dir, exist_ok=True)
+    stem = os.path.splitext(os.path.basename(path))[0]
+    import svg_raster
+    files = []
+    dpi = float(req.get("dpi") or 110)
+    for number in pages:
+        target = os.path.join(out_dir, "%s-p%d.png" % (stem, number))
+        svg = doc.to_svg(number, interactive=False, background=False)
+        svg_raster.rasterize(svg, scale=dpi).save(target)
+        files.append(target)
+    return {"ok": True, "path": path, "pages": len(pages), "files": files}
+
+
+def action_capabilities(_req):
+    return {"ok": True, "actions": sorted(ACTIONS.keys()),
+            "kinds": list_kinds(), "notes": {
+                "stencils": "stencil_info / stencil_sheet / stencil_add take a .vssx/.vstx path",
+                "visual": "snapshot writes PNG files per page; export writes one SVG/PNG",
+                "units": "inches, origin bottom-left",
+            }}
+
+
+def list_kinds():
+    try:
+        import kinds
+        return sorted(kinds.KINDS.keys())
+    except Exception:
+        return []
+
+
 ACTIONS = {
     "ping": action_ping,
     "list": action_list,
@@ -608,6 +711,10 @@ ACTIONS = {
     "normalize": action_normalize,
     "export": action_export,
     "validate": action_validate,
+    "stencil_info": action_stencil_info,
+    "stencil_sheet": action_stencil_sheet,
+    "snapshot": action_snapshot,
+    "capabilities": action_capabilities,
 }
 
 

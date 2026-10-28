@@ -45,8 +45,9 @@ for (const action of ['open', 'text', 'get_shape', 'create', 'list', 'set_text',
   assert.ok(actions.includes(action), `tool is missing action ${action}`)
 }
 assert.deepEqual(Object.keys(tool.parameters.properties).sort(), [
-  'action', 'cell', 'dir', 'format', 'from', 'h', 'height', 'kind', 'label', 'master', 'name',
-  'out', 'page', 'path', 'shape_id', 'stencil', 'text', 'title', 'to', 'value', 'w', 'width', 'x', 'y',
+  'action', 'all', 'cell', 'dpi', 'dir', 'file', 'format', 'from', 'h', 'height', 'kind', 'label',
+  'master', 'name', 'out', 'page', 'path', 'shape_id', 'stencil', 'text', 'title', 'to', 'value',
+  'w', 'width', 'x', 'y',
 ].sort())
 
 const call = async (args) => {

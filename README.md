@@ -19,7 +19,9 @@ no Office dependency.
 - **Relationship audit** – `validate` finds empty links (connectors with no `Connect` rows),
   dangling ids, floating endpoints and zero-size shapes.
 - **Multi-page, zoom, pan, grid, undo/redo**, external-change detection.
-- **Agent tool** – the same operations are exposed to the model as a `visio` tool.
+- **Agent tool** – the same operations are exposed to the model as a `visio` tool, including
+  stencil discovery (`stencil_info`, `stencil_sheet`), whole-drawing snapshots (`snapshot`)
+  and a self-describing `capabilities` action.
 
 ## Install
 
@@ -43,8 +45,10 @@ Requires Python 3.9+ on `PATH` (or set `pythonPath` in the plugin config / `DSH_
 - Pick a folder, click a `.vsdx`; the left tree lists pages and shapes, the right pane edits
   the selection.
 - From the agent side: ask for a drawing and the model calls the `visio` tool
-  (`open`, `text`, `get_shape`, `create`, `list`, `set_text`, `set_cell`, `set_prop`,
-  `add_shape`, `connect`, `delete`, `validate`, `export`).
+  (`open`, `text`, `get_shape`, `list`, `create`, `add_shape`, `move`, `set_text`, `set_cell`,
+  `set_prop`, `connect`, `delete`, `validate`, `kinds`, `stencils`, `stencil_info`,
+  `stencil_sheet`, `stencil_add`, `snapshot`, `capabilities`, `undo`, `redo`, `normalize`,
+  `export`).  `examples/basic-shapes.vssx` is a three-master stencil used by the tests.
 
 ## Configuration
 

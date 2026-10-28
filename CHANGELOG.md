@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.14.0
+- `stencil_info`: name, prompt, keywords, size, shape count and sample text per master.
+- `stencil_sheet`: PNG contact sheet of every master in a `.vssx`/`.vstx`.
+- `snapshot`: renders every page to PNG **through the same SVG the panel shows**
+  (`engine/svg_raster.py`), so exports and preview can no longer drift.
+- `capabilities`: machine-readable list of actions, kinds and notes.
+- `examples/basic-shapes.vssx` + `tests/make_vssx.py` fixture builder.
+
+
 ## 1.13.2
 - Drag: `pointercancel` / window `blur` end the drag, so a release outside the window no
   longer leaves a shape at 85% opacity with a stale selection box.

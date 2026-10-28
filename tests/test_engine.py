@@ -180,6 +180,31 @@ class EngineTests(unittest.TestCase):
         self.assertEqual([r[0] for r in runs], ["one", "two"])
         self.assertIsNone(runs[1][1])                   # no Character override -> None
 
+    def test_stencil_info_and_sheet(self):
+        import make_vssx
+        st = os.path.join(OUT, "shapes.vssx")
+        make_vssx.build(st)
+        info = run_bridge({"action": "stencil_info", "file": st})
+        names = [m["name"] for m in info["masters"]]
+        self.assertEqual(names, ["Rectangle", "Diamond", "Arrow Right"])
+        self.assertTrue(all(m["width"] and m["height"] for m in info["masters"]))
+        sheet = run_bridge({"action": "stencil_sheet", "file": st})
+        self.assertTrue(os.path.getsize(sheet["out"]) > 2000)
+
+    def test_snapshot_matches_page(self):
+        path = os.path.join(OUT, "shot.vsdx")
+        blank_doc.create(path, 11, 8.5, "P1", "")
+        doc = Vsdx(path)
+        doc.add_shape(page=1, x=1, y=5, w=2, h=1, text="Hello")
+        doc.save()
+        out = os.path.join(OUT, "shots")
+        snap = run_bridge({"action": "snapshot", "path": path, "out": out, "dpi": 96})
+        self.assertEqual(len(snap["files"]), 1)
+        from PIL import Image
+        with Image.open(snap["files"][0]) as img:
+            self.assertGreater(img.size[0], 900)
+            self.assertGreater(img.size[1], 700)
+
 
 class BridgeTests(unittest.TestCase):
     @classmethod
