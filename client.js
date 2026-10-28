@@ -37,6 +37,8 @@ window.__ModuleLoader__.load({
       text: '文本',
       textPlaceholder: '形状文字（支持多行）',
       geometry: '位置与大小',
+      outOfPage: '已超出页面范围',
+      snapBack: '拉回页面',
       x: 'X',
       y: 'Y',
       width: '宽',
@@ -145,6 +147,8 @@ window.__ModuleLoader__.load({
       text: 'Text',
       textPlaceholder: 'Shape text (multi-line)',
       geometry: 'Position and size',
+      outOfPage: 'Outside the page',
+      snapBack: 'Bring back',
       x: 'X',
       y: 'Y',
       width: 'W',
@@ -386,6 +390,7 @@ window.__ModuleLoader__.load({
   background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px}
 .dshv-input:focus{outline:none;border-color:var(--dsw-alias-brand-primary)}
 textarea.dshv-input{height:auto;min-height:64px;padding:6px 7px;resize:vertical;line-height:1.4}
+.dshv-warn{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px;color:var(--dsw-alias-state-error)}
 .dshv-row{display:flex;gap:6px;align-items:center}
 .dshv-col{flex:1;min-width:0}
 .dshv-grow{flex:1}
@@ -986,8 +991,9 @@ textarea.dshv-input{height:auto;min-height:64px;padding:6px 7px;resize:vertical;
         }
         const current = docRef.current
         if (!current) return
-        const x = Math.round((drag.bbox.x + drag.dx) * 1000) / 1000
-        const y = Math.round((drag.bbox.y - drag.dy) * 1000) / 1000
+        const pageSize = current.pageSize || { w: 11, h: 8.5 }
+        const x = Math.round(Math.min(Math.max(0, drag.bbox.x + drag.dx), Math.max(0, pageSize.w - drag.bbox.w)) * 1000) / 1000
+        const y = Math.round(Math.min(Math.max(0, drag.bbox.y - drag.dy), Math.max(0, pageSize.h - drag.bbox.h)) * 1000) / 1000
         // The shape already sits where it was dropped: commit the box locally and
         // persist in the background, then reconcile the SVG once the file is saved.
         setDoc((prev) => (prev ? {
@@ -1344,6 +1350,19 @@ textarea.dshv-input{height:auto;min-height:64px;padding:6px 7px;resize:vertical;
       }
 
       const bbox = shape?.bbox || { x: 0, y: 0, w: 0, h: 0 }
+      const page = (doc && doc.pageSize) || { w: 11, h: 8.5 }
+      const clampBox = (patch) => {
+        const w = Math.min(Math.max(0.05, patch.w ?? bbox.w), page.w)
+        const h = Math.min(Math.max(0.05, patch.h ?? bbox.h), page.h)
+        return {
+          w,
+          h,
+          x: Math.min(Math.max(0, patch.x ?? bbox.x), Math.max(0, page.w - w)),
+          y: Math.min(Math.max(0, patch.y ?? bbox.y), Math.max(0, page.h - h)),
+        }
+      }
+      const outOfPage = bbox.x < -0.001 || bbox.y < -0.001
+        || bbox.x + bbox.w > page.w + 0.001 || bbox.y + bbox.h > page.h + 0.001
       const style = detail.style || {}
       const candidates = (doc.shapes || []).filter((item) => item.id !== shapeId && !item.connector)
       const props = Object.entries(detail.props || {})
@@ -1373,10 +1392,15 @@ textarea.dshv-input{height:auto;min-height:64px;padding:6px 7px;resize:vertical;
         h('div', { className: 'dshv-section' },
           h('div', { className: 'dshv-sectionTitle' }, t('geometry')),
           h('div', { className: 'dshv-row' },
-            h(NumberField, { label: t('x'), value: bbox.x, onCommit: (x) => onCommitMove({ x }) }),
-            h(NumberField, { label: t('y'), value: bbox.y, onCommit: (y) => onCommitMove({ y }) }),
-            h(NumberField, { label: t('width'), value: bbox.w, onCommit: (w) => onCommitMove({ w }) }),
-            h(NumberField, { label: t('height'), value: bbox.h, onCommit: (h) => onCommitMove({ h }) }))),
+            h(NumberField, { label: t('x'), value: bbox.x, onCommit: (x) => onCommitMove(clampBox({ x })) }),
+            h(NumberField, { label: t('y'), value: bbox.y, onCommit: (y) => onCommitMove(clampBox({ y })) }),
+            h(NumberField, { label: t('width'), value: bbox.w, onCommit: (w) => onCommitMove(clampBox({ w })) }),
+            h(NumberField, { label: t('height'), value: bbox.h, onCommit: (h) => onCommitMove(clampBox({ h })) })),
+          outOfPage
+            ? h('div', { className: 'dshv-warn' },
+                h('span', null, t('outOfPage')),
+                h(Btn, { small: true, variant: 'ghost', onClick: () => onCommitMove(clampBox({})) }, t('snapBack')))
+            : null),
 
         h('div', { className: 'dshv-section' },
           h('div', { className: 'dshv-sectionTitle' }, t('style')),

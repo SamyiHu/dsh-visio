@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.14.1
+- Geometry is kept inside the page: drag clamps to the page box, and typing X/Y/W/H clamps too.
+- The inspector shows a red "outside the page" warning with a one-click "bring back" action.
+
+
 ## 1.14.0
 - `stencil_info`: name, prompt, keywords, size, shape count and sample text per master.
 - `stencil_sheet`: PNG contact sheet of every master in a `.vssx`/`.vstx`.
