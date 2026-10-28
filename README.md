@@ -2,107 +2,92 @@
 
 [![CI](https://github.com/SamyiHu/dsh-visio/actions/workflows/ci.yml/badge.svg)](https://github.com/SamyiHu/dsh-visio/actions/workflows/ci.yml)
 
-A native **Visio (.vsdx) viewer and editor for the DeepSeek Harness (DSH) Web UI**, with a
-live preview, shape editing and a `visio` agent tool.  Pure Python engine, no Visio install,
-no Office dependency.
+**在 DeepSeek Harness（DSH）Web 界面里直接看和改 Visio 图纸（.vsdx）的插件**：实时预览、形状编辑，外加一个给 Agent 用的 `visio` 工具。
+
+引擎是纯 Python 标准库实现，**不需要装 Visio，也不依赖 Office**。
+
+[English](README.en.md) · 简体中文
 
 ![status](https://img.shields.io/badge/status-beta-yellow)
 ![license](https://img.shields.io/badge/license-MIT-blue)
 ![engine](https://img.shields.io/badge/engine-python--stdlib-green)
 
-## Features
+## 功能
 
-- **Live preview** – the panel renders the `.vsdx` page to SVG and repaints after every edit.
-- **Edit in place** – move / resize, text, fill, line, per-run text colour, shape data.
-- **Shape library** – 16 built-in kinds (process, decision, terminator, …) plus
-  `.vssx`/`.vstx` stencil import; drawn from real Visio masters, not stacked lines.
-- **Connectors** – add, label, delete; connectors keep their own line colour, weight and
-  arrow heads, and their labels are read from the 1-D shape text.
-- **Relationship audit** – `validate` finds empty links (connectors with no `Connect` rows),
-  dangling ids, floating endpoints and zero-size shapes.
-- **Multi-page, zoom, pan, grid, undo/redo**, external-change detection.
-- **Agent tool** – the same operations are exposed to the model as a `visio` tool, including
-  stencil discovery (`stencil_info`, `stencil_sheet`), whole-drawing snapshots (`snapshot`)
-  and a self-describing `capabilities` action.
+- **实时预览**：面板把 `.vsdx` 页面渲染成 SVG，每次改动后立即重绘。
+- **就地编辑**：移动/缩放、文字、填充、线条、逐行文字颜色、形状数据。
+- **形状库**：内置 16 种图形（流程、判定、起止……），支持导入 `.vssx` / `.vstx` 模具；图形用真实 Visio 母版几何绘制，不是几条线拼出来的。
+- **连接线**：新增、加标签、删除；线自己的颜色/线宽/箭头都保留，标签从 1-D 形状的文字里读。
+- **关系检查**：`validate` 能找出空连接（没有 `Connect` 行的线）、悬空 ID、漂移端点、零尺寸形状。
+- **多页、缩放、平移、网格、撤销/重做**，以及文件被外部修改时的自动检测。
+- **Agent 工具**：同一套能力以 `visio` 工具暴露给模型，含模具发现（`stencil_info`、`stencil_sheet`）、整图快照（`snapshot`）和自描述的 `capabilities`。
 
-## Install
+## 安装
 
 ```bash
-# 1. clone next to your other local bundles
+# 1. 克隆到你的本地 bundle 目录旁
 git clone https://github.com/SamyiHu/dsh-visio.git
-# 2. install into the running Harness (Reload DSH afterwards)
+# 2. 装进正在运行的 Harness（之后重载一次 DSH）
 dsh plugin install /absolute/path/to/dsh-visio
 ```
 
-Manual equivalent: add `"@local/dsh-visio": "link:/absolute/path/to/dsh-visio"` to the profile
-`package.json`, run `pnpm install`, then reload the app.  The bundle patch
-`cordis.patch.yml` inserts the plugin automatically.
+手动等价做法：在 profile 的 `package.json` 里加 `"@local/dsh-visio": "link:/absolute/path/to/dsh-visio"`，执行 `pnpm install`，再重载应用。插件自带 `cordis.patch.yml`，会自动插入。
 
-Requires Python 3.9+ on `PATH` (or set `pythonPath` in the plugin config / `DSH_VISIO_PYTHON`).
+需要 `PATH` 里有 Python 3.9+（或在插件配置里设 `pythonPath`，或设环境变量 `DSH_VISIO_PYTHON`）。
 
-## Usage
+## 使用
 
-- Sidebar → **Visio 图纸** opens the panel; the floating canvas button opens the same
-  drawing in a draggable window.
-- Pick a folder, click a `.vsdx`; the left tree lists pages and shapes, the right pane edits
-  the selection.
-- From the agent side: ask for a drawing and the model calls the `visio` tool
-  (`open`, `text`, `get_shape`, `list`, `create`, `add_shape`, `move`, `set_text`, `set_cell`,
-  `set_prop`, `connect`, `delete`, `validate`, `kinds`, `stencils`, `stencil_info`,
-  `stencil_sheet`, `stencil_add`, `snapshot`, `capabilities`, `undo`, `redo`, `normalize`,
-  `export`).  `examples/basic-shapes.vssx` is a three-master stencil used by the tests.
+- 侧栏 → **Visio 图纸** 打开面板；浮动画布按钮可以把同一张图放进可拖动的独立窗口。
+- 选目录 → 点一个 `.vsdx`：左边树列页面和形状，右边改选中形状的属性。
+- Agent 侧直接说需求即可，模型会调 `visio` 工具：
+  `open`、`text`、`get_shape`、`list`、`create`、`add_shape`、`move`、`set_text`、`set_cell`、
+  `set_prop`、`connect`、`delete`、`validate`、`kinds`、`stencils`、`stencil_info`、
+  `stencil_sheet`、`stencil_add`、`snapshot`、`capabilities`、`undo`、`redo`、`normalize`、`export`。
+  `examples/basic-shapes.vssx` 是测试用的三母版模具。
 
-## Configuration
+## 配置
 
-| key | default | meaning |
+| 键 | 默认值 | 含义 |
 |---|---|---|
-| `pythonPath` | `python` | interpreter used for the engine |
-| `defaultFolder` | workspace dir | where the file browser starts |
+| `pythonPath` | `python` | 引擎使用的解释器 |
+| `defaultFolder` | 工作目录 | 文件浏览器起始目录 |
 
-## Architecture
+## 结构
 
 ```
-index.js            Host half: `visio` tool + same-origin routes, bridge pool
-client.js           Client half: panel, floating window, inspector, i18n
-engine/vsdx_core.py Reader/editor/renderer (OPC + XML, stdlib only)
-engine/visio_bridge.py  JSON line protocol used by the Host
-engine/blank_doc.py     Creates a minimal valid .vsdx from scratch
-engine/kinds.py         16 built-in shape kinds (real master geometry)
-engine/stencil.py       .vssx/.vstx import
-tests/                  engine, client-render, client-contract, host-contract
+index.js                 Host 侧：`visio` 工具 + 同源路由、引擎进程池
+client.js                Client 侧：面板、浮窗、属性检查器、i18n
+engine/vsdx_core.py      读写渲染核心（OPC + XML，纯标准库）
+engine/visio_bridge.py   Host 调用的 JSON 行协议
+engine/blank_doc.py      从零生成最小可用 .vsdx
+engine/kinds.py          16 种内置图形（真实母版几何）
+engine/stencil.py        .vssx/.vstx 导入
+tests/                   引擎、客户端渲染、客户端契约、Host 契约
 ```
 
-The Host keeps one engine child process per interpreter and **restarts it when any
-`engine/*.py` file changes** (mtime + size fingerprint), so edits never run on stale code.
+Host 按解释器各留一个引擎子进程，并**在任意 `engine/*.py` 变化时重启**（mtime + size 指纹），避免改完还跑旧代码。
 
-## Development
+## 开发与测试
 
 ```bash
-python tests/test_engine.py          # 13 engine cases (incl. validate + text runs)
-node tests/test_client_render.mjs    # renders panel/inspector/dialog headlessly
-node tests/test_client_contract.mjs  # i18n keys + slot contract
-node tests/test_host_contract.mjs    # tool schema + routes + bridge round trip
+python tests/test_engine.py          # 15 例：编辑、连线、模具、快照
+node tests/test_client_render.mjs    # 无头渲染面板/检查器/新建对话框
+node tests/test_client_contract.mjs  # 翻译键 + 槽位契约
+node tests/test_host_contract.mjs    # 工具 schema + 路由 + 桥往返
+node tests/make_uicheck.mjs          # 生成右栏布局页，可在真浏览器里量尺寸
 ```
 
-## Limitations
+## 已知限制
 
-- SVG preview approximates Visio typography (line breaking by width estimate).
-- Themes/masters are honoured for geometry and colour, not for every style inheritance rule.
-- `.vsdm` macros are not executed.
+- SVG 预览对排版是近似（按宽度估算换行），和 Visio 不保证逐像素一致。
+- 主题/母版对几何和颜色的处理是有的，但不是每条样式继承规则都实现。
+- `.vsdm` 宏不执行。
 
-## Licence
+## CI / CD
 
-MIT — see [LICENSE](LICENSE).  No third-party fixtures are bundled; tests build their own documents.
+- `ci.yml`：push/PR 在 **Linux + Windows** 双矩阵跑语法检查、引擎 15 例、客户端契约、Host 契约，通过后产出整包 zip 附件。
+- `release.yml`：打 `v*` tag 自动发 Release；**tag 与 `package.json` 版本不一致直接失败**。
 
+## 许可
 
-## CI
-
-`.github/workflows/ci.yml` runs on every push/PR across Linux and Windows:
-
-- `node --check` on both halves, `py_compile` on the engine
-- `tests/test_engine.py` (15 cases: edit, connectors, stencils, snapshots)
-- `tests/test_client_render.mjs` and `tests/test_client_contract.mjs` (slots + 94 translations)
-- `tests/test_host_contract.mjs` (tool schema, routes, bridge round trip)
-
-`release.yml` publishes a zip on every `v*` tag, after the same test suite, and refuses a tag
-that does not match `package.json` version.
+MIT，见 [LICENSE](LICENSE)。仓库不含第三方样例文件，测试自己生成文档。
