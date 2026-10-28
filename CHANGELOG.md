@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.14.4
+- The text box spans the full inspector width (it was sized by the browser's default `cols`),
+  and its height dropped to 74px (3 rows), still resizable.
+
+
 ## 1.14.3
 - The panel footer shows the client build (`v1.14.3`), so a stale bundle is visible at a glance.
 

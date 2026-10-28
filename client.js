@@ -391,7 +391,7 @@ window.__ModuleLoader__.load({
 .dshv-input{flex:1;min-width:0;height:26px;padding:0 7px;border-radius:5px;border:1px solid var(--dsw-alias-border-l1);
   background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px}
 .dshv-input:focus{outline:none;border-color:var(--dsw-alias-brand-primary)}
-textarea.dshv-input{height:auto;min-height:104px;padding:7px 8px;resize:vertical;line-height:1.5}
+textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px;padding:7px 8px;resize:vertical;line-height:1.5}
 .dshv-warn{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px;color:var(--dsw-alias-state-error)}
 .dshv-row{display:flex;gap:6px;align-items:center}
 .dshv-grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;align-items:end}
@@ -1389,7 +1389,7 @@ textarea.dshv-input{height:auto;min-height:104px;padding:7px 8px;resize:vertical
           h('div', { className: 'dshv-sectionTitle' }, t('text')),
           h('textarea', {
             className: 'dshv-input',
-            rows: 4,
+            rows: 3,
             value: text,
             placeholder: t('textPlaceholder'),
             onChange: (e) => setText(e.target.value),
