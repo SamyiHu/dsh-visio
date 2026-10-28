@@ -72,7 +72,7 @@ The Host keeps one engine child process per interpreter and **restarts it when a
 ## Development
 
 ```bash
-python tests/test_engine.py          # 11 engine cases
+python tests/test_engine.py          # 13 engine cases (incl. validate + text runs)
 node tests/test_client_render.mjs    # renders panel/inspector/dialog headlessly
 node tests/test_client_contract.mjs  # i18n keys + slot contract
 node tests/test_host_contract.mjs    # tool schema + routes + bridge round trip

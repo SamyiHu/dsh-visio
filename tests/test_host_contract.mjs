@@ -80,6 +80,20 @@ assert.ok(cellSet.includes('已更新 1 个单元格'), cellSet)
 const exported = await call({ action: 'export', path: drawing, format: 'svg' })
 assert.ok(exported.includes('.svg'), exported)
 
+const kinds = await call({ action: 'kinds' })
+assert.ok(kinds.split(String.fromCharCode(10)).length >= 16, kinds)
+
+const moved = await call({ action: 'move', path: drawing, shape_id: '2', x: 2, y: 2, w: 2, h: 1 })
+assert.ok(moved.length > 0, moved)
+const undone = await call({ action: 'undo', path: drawing })
+assert.ok(undone.length > 0, undone)
+const redone = await call({ action: 'redo', path: drawing })
+assert.ok(redone.length > 0, redone)
+
+const audit = await call({ action: 'validate', path: drawing })
+assert.ok(audit.includes('connectors 1'), audit)
+assert.ok(audit.includes('errors 0'), audit)
+
 // ---- routes ---------------------------------------------------------------
 const configRoute = routes.find((route) => route.path === '/dsh-visio/config')
 const opRoute = routes.find((route) => route.path === '/dsh-visio/op')

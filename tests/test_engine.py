@@ -153,6 +153,33 @@ class EngineTests(unittest.TestCase):
         with self.assertRaises(Exception):
             blank_doc.create(self.path, 0, 8)
 
+    def test_validate_flags_zero_size_and_unbound(self):
+        path = os.path.join(OUT, "audit.vsdx")
+        blank_doc.create(path, 11, 8.5, "P1", "Audit")
+        doc = Vsdx(path)
+        a = doc.add_shape(page=1, x=1, y=5, w=2, h=1, text="A")
+        b = doc.add_shape(page=1, x=5, y=5, w=2, h=1, text="B")
+        doc.connect(a, b, label="go", page=1)
+        doc.set_cells(a, {"Width": 0}, page=1)          # collapse one shape
+        doc.save()
+        report = run_bridge({"action": "validate", "path": path})
+        codes = {item["code"] for item in report["issues"]}
+        self.assertIn("zero-size", codes)
+        self.assertEqual(report["counts"]["error"], 1)
+        self.assertEqual(report["connectors"], 1)
+        labels = [i for i in report["issues"] if i["code"] == "connector-label"]
+        self.assertTrue(labels and "go" in labels[0]["message"])
+
+    def test_text_runs_use_character_colours(self):
+        path = os.path.join(OUT, "runs.vsdx")
+        blank_doc.create(path, 11, 8.5, "P1", "Runs")
+        doc = Vsdx(path)
+        sid = doc.add_shape(page=1, x=1, y=5, w=2, h=1, text="one\ntwo")
+        doc.save()
+        runs = Vsdx(path).text_runs(sid, 1)
+        self.assertEqual([r[0] for r in runs], ["one", "two"])
+        self.assertIsNone(runs[1][1])                   # no Character override -> None
+
 
 class BridgeTests(unittest.TestCase):
     @classmethod
