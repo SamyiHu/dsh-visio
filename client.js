@@ -9,6 +9,8 @@ window.__ModuleLoader__.load({
     const ROUTE = 'dsh-visio'
     const PANEL_ID = 'dsh-visio'
     const POLL_MS = 2500
+    // Bumped with every release: the footer shows it, so a stale bundle is obvious.
+    const CLIENT_BUILD = '1.14.3'
 
     /* ------------------------------------------------------------- locale */
 
@@ -427,6 +429,7 @@ textarea.dshv-input{height:auto;min-height:104px;padding:7px 8px;resize:vertical
 .dshv-status{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:5px 14px;border-top:1px solid var(--dsw-alias-border-l1);
   font-size:11px;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-base);min-height:28px}
 .dshv-status .err{color:var(--dsw-alias-state-error-primary)}
+.dshv-status .dshv-ver{font-size:10.5px;color:var(--dsw-alias-label-secondary);opacity:.75}
 .dshv-status .ok{color:var(--dsw-alias-state-success-primary)}
 .dshv-spinner{width:11px;height:11px;border-radius:50%;border:2px solid var(--dsw-alias-border-l2);border-top-color:var(--dsw-alias-brand-primary);
   animation:dshv-spin .8s linear infinite;display:inline-block}
@@ -1305,6 +1308,7 @@ textarea.dshv-input{height:auto;min-height:104px;padding:7px 8px;resize:vertical
           config && config.pythonOk === false ? h('span', { className: 'err' }, t('pythonMissing')) : null,
           configError ? h('span', { className: 'err' }, configError) : null,
           h('span', { className: 'dshv-grow' }),
+          h('span', { className: 'dshv-ver', title: 'client build' }, 'v' + CLIENT_BUILD),
           doc ? h('span', { className: 'dshv-badge' }, t('autosave')) : null),
 
         createOpen

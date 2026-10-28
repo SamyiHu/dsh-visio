@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.14.3
+- The panel footer shows the client build (`v1.14.3`), so a stale bundle is visible at a glance.
+
+
 ## 1.14.2
 - Geometry fields share one 4-column grid: no field can grow wider than its neighbours.
 - The text box is 104px tall (was 64px) and resizable.
