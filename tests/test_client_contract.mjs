@@ -27,6 +27,13 @@ const sandbox = {
   URL,
 }
 vm.runInNewContext(source, sandbox)
+// The footer badge must not lie about which build is running.
+{
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+  const build = /const CLIENT_BUILD = '([^']+)'/.exec(readFileSync(new URL('../client.js', import.meta.url), 'utf8'))
+  assert.equal(build && build[1], pkg.version, 'CLIENT_BUILD must match package.json version')
+}
+
 assert.ok(loaded, 'window.__ModuleLoader__.load was never called')
 
 const noop = () => {}
