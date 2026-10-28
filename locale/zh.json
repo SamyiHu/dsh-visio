@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Visio 图纸",
+    "description": "读取、创建和修改 .vsdx 图纸，带实时预览；不需要安装 Visio。"
+  }
+}

@@ -1,0 +1,7 @@
+node_modules/
+_tmp/
+_tools/
+*.bak-*
+__pycache__/
+*.pyc
+examples/*.png

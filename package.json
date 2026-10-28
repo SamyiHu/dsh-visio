@@ -1,0 +1,49 @@
+{
+  "name": "@local/dsh-visio",
+  "version": "1.12.0",
+  "private": true,
+  "type": "module",
+  "description": "Visio (.vsdx) viewer/editor for the DeepSeek Harness Web UI: live SVG preview, shape editing, connectors and a visio agent tool.",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "engine/*.py",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-theme"
+      ]
+    }
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SamyiHu/dsh-visio.git"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "visio",
+    "vsdx",
+    "diagram",
+    "svg"
+  ],
+  "author": "SamyiHu"
+}

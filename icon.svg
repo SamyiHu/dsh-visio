@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Visio drawings">
+  <defs>
+    <linearGradient id="dshv-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3A7FD5"/>
+      <stop offset="1" stop-color="#1E4E8C"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#dshv-bg)"/>
+  <path d="M17 11h22l10 10v30a3 3 0 0 1-3 3H17a3 3 0 0 1-3-3V14a3 3 0 0 1 3-3z" fill="#FFFFFF"/>
+  <path d="M39 11l10 10H39z" fill="#C9DDF5"/>
+  <rect x="20" y="27" width="15" height="9" rx="2.2" fill="#2F6FBF"/>
+  <path d="M44 35.5l6.5 6.5-6.5 6.5-6.5-6.5z" fill="#F2A33A"/>
+  <path d="M35 31.5h3.2v10.5h4.6" fill="none" stroke="#2F6FBF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="47" cy="19" r="4.2" fill="#FFFFFF" opacity="0.92"/>
+  <path d="M45.2 19l1.4 1.4 2.4-2.6" fill="none" stroke="#2F6FBF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
