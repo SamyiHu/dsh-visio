@@ -5,3 +5,6 @@ _tools/
 __pycache__/
 *.pyc
 examples/*.png
+_electron-install.log
+tests/_uicheck.html
+_uicheck.html
