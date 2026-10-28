@@ -971,7 +971,7 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         const label = drag.isConn && drag.textNode
         if (label) {
           drag.textNode.setAttribute('transform',
-            `translate(${drag.dx.toFixed(4)} ${(-drag.dy).toFixed(4)})`)
+            `translate(${drag.dx.toFixed(4)} ${drag.dy.toFixed(4)})`)
         } else {
           drag.node.setAttribute('transform',
             `translate(${(drag.base.x + drag.dx).toFixed(4)} ${(drag.base.y + drag.dy).toFixed(4)})`)

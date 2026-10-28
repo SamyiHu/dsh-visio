@@ -1573,10 +1573,16 @@ class Vsdx:
                        'vector-effect="non-scaling-stroke" pointer-events="stroke"/>' % d)
             if s["text"]:
                 mx, my = (x1 + x2) / 2.0, H - (y1 + y2) / 2.0
+                # A 1-D shape's text pin lives in the shape's rotated frame; the cached
+                # value can sit far outside the line (0.86in in one file).  Only trust it
+                # when it is plausibly near the line's middle, otherwise centre the label.
                 if c.get("TxtPinX") is not None and c.get("TxtPinY") is not None:
                     try:
-                        mx = float(c["TxtPinX"]) + float(c.get("PinX") or 0) - float(c.get("LocPinX") or 0)
-                        my = H - (float(c["TxtPinY"]) + float(c.get("PinY") or 0) - float(c.get("LocPinY") or 0))
+                        ox = float(c["TxtPinX"]) - float(c.get("LocPinX") or 0)
+                        oy = float(c["TxtPinY"]) - float(c.get("LocPinY") or 0)
+                        if abs(ox) <= 0.3 and abs(oy) <= 0.3:
+                            mx = float(c.get("PinX") or 0) + ox
+                            my = float(c.get("PinY") or 0) + oy
                     except (TypeError, ValueError):
                         pass
                 label = [ln for ln in s["text"].split("\n") if ln.strip()][:4]
