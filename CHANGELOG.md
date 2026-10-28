@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.16.2
+- Connectors attach to the **middle of the facing side** and route at right angles, so a line
+  never stops short of a shape, dives into it at an angle, or leaves a dangling stub.
+
+
 ## 1.16.1
 - Dynamic connectors are drawn with **right-angle routing**, the way Visio shows them,
   instead of the straight diagonal stored in the file.

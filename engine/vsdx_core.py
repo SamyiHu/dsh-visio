@@ -1406,6 +1406,7 @@ class Vsdx:
                            'markerWidth="5" markerHeight="5" orient="auto-start-reverse">'
                            '<path d="M 0 0 L 10 5 L 0 10 z" fill="%s"/></marker>' % (_c.lstrip("#"), _c))
             out.append("</defs>")
+        by_id = {sh["id"]: sh for sh in shapes}
         open_group = (lambda sid: '<g data-shape-id="%s">' % _esc(sid)) if interactive else (lambda sid: "<g>")
         for s in shapes:
             if s["connector"] or s["depth"] != 0 or s.get("type") == "Guide":
@@ -1569,14 +1570,18 @@ class Vsdx:
                 # across the page is what the file stores, not what Visio shows.
                 name_u = str(det.get("name") or "").lower()
                 dynamic = "dynamic" in name_u
-                dx_, dy_ = x2 - x1, y2 - y1
-                if dynamic and abs(dx_) > 0.02 and abs(dy_) > 0.02:
-                    if abs(dx_) >= abs(dy_):
-                        mx_ = (x1 + x2) / 2.0
-                        pts2 = [(x1, y1), (mx_, y1), (mx_, y2), (x2, y2)]
-                    else:
-                        my_ = (y1 + y2) / 2.0
-                        pts2 = [(x1, y1), (x1, my_), (x2, my_), (x2, y2)]
+                # Attach to the middle of the facing sides, so a connector never stops
+                # short of the shape or runs into it at an angle.
+                ends = [str(c["to"]) for c in (s.get("connects") or [])]
+                boxes = [by_id[i]["bbox"] for i in ends if i in by_id]
+                if dynamic and len(boxes) == 2:
+                    pts2 = _route_ports(boxes[0], boxes[1])
+                else:
+                    pts2 = [(x1, y1), (x2, y2)]
+                if len(pts2) > 2:
+                    d = "M %0.4f %0.4f" % (pts2[0][0], H - pts2[0][1])
+                    for px, py in pts2[1:]:
+                        d += " L %0.4f %0.4f" % (px, H - py)
                     d = "M %0.4f %0.4f" % (pts2[0][0], H - pts2[0][1])
                     for px, py in pts2[1:]:
                         d += " L %0.4f %0.4f" % (px, H - py)
@@ -1781,6 +1786,24 @@ def _fmt(v) -> str:
 def _esc(s: str) -> str:
     return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
              .replace('"', "&quot;"))
+
+
+def _route_ports(a, b):
+    """Orthogonal route between two boxes, entering the middle of facing sides."""
+    acx, acy = a["x"] + a["w"] / 2.0, a["y"] + a["h"] / 2.0
+    bcx, bcy = b["x"] + b["w"] / 2.0, b["y"] + b["h"] / 2.0
+    dx, dy = bcx - acx, bcy - acy
+    if abs(dx) >= abs(dy):
+        x1 = a["x"] + a["w"] if dx > 0 else a["x"]
+        x2 = b["x"] if dx > 0 else b["x"] + b["w"]
+        y1, y2 = acy, bcy
+        mx = (x1 + x2) / 2.0
+        return [(x1, y1), (mx, y1), (mx, y2), (x2, y2)]
+    y1 = a["y"] + a["h"] if dy > 0 else a["y"]
+    y2 = b["y"] if dy > 0 else b["y"] + b["h"]
+    x1, x2 = acx, bcx
+    my = (y1 + y2) / 2.0
+    return [(x1, y1), (x1, my), (x2, my), (x2, y2)]
 
 
 def _text_em(text: str) -> float:
