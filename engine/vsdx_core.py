@@ -1407,6 +1407,12 @@ class Vsdx:
                            '<path d="M 0 0 L 10 5 L 0 10 z" fill="%s"/></marker>' % (_c.lstrip("#"), _c))
             out.append("</defs>")
         by_id = {sh["id"]: sh for sh in shapes}
+        import route_grammar as _rg
+        try:
+            page_routes, route_issues, _ = _rg.layout(shapes)
+        except Exception:
+            page_routes, route_issues = {}, []
+        self.route_issues = route_issues
         open_group = (lambda sid: '<g data-shape-id="%s">' % _esc(sid)) if interactive else (lambda sid: "<g>")
         for s in shapes:
             if s["connector"] or s["depth"] != 0 or s.get("type") == "Guide":
@@ -1574,19 +1580,10 @@ class Vsdx:
                 # short of the shape or runs into it at an angle.
                 ends = [str(c["to"]) for c in (s.get("connects") or [])]
                 boxes = [by_id[i]["bbox"] for i in ends if i in by_id]
-                if dynamic and len(boxes) == 2:
-                    pts2 = _route_ports(boxes[0], boxes[1])
-                else:
-                    pts2 = [(x1, y1), (x2, y2)]
-                if len(pts2) > 2:
-                    d = "M %0.4f %0.4f" % (pts2[0][0], H - pts2[0][1])
-                    for px, py in pts2[1:]:
-                        d += " L %0.4f %0.4f" % (px, H - py)
-                    d = "M %0.4f %0.4f" % (pts2[0][0], H - pts2[0][1])
-                    for px, py in pts2[1:]:
-                        d += " L %0.4f %0.4f" % (px, H - py)
-                else:
-                    d = "M %0.4f %0.4f L %0.4f %0.4f" % (x1, H - y1, x2, H - y2)
+                pts2 = page_routes.get(s["id"]) or [(x1, y1), (x2, y2)]
+                d = "M %0.4f %0.4f" % (pts2[0][0], H - pts2[0][1])
+                for px, py in pts2[1:]:
+                    d += " L %0.4f %0.4f" % (px, H - py)
                 out.append('<path d="%s" fill="none" stroke="%s" %s marker-end="%s"/>'
                            % (d, line_color, width_attr, marker))
             # fat, invisible target so a 0.01in line can be clicked
@@ -1788,22 +1785,66 @@ def _esc(s: str) -> str:
              .replace('"', "&quot;"))
 
 
-def _route_ports(a, b):
-    """Orthogonal route between two boxes, entering the middle of facing sides."""
-    acx, acy = a["x"] + a["w"] / 2.0, a["y"] + a["h"] / 2.0
-    bcx, bcy = b["x"] + b["w"] / 2.0, b["y"] + b["h"] / 2.0
-    dx, dy = bcx - acx, bcy - acy
-    if abs(dx) >= abs(dy):
-        x1 = a["x"] + a["w"] if dx > 0 else a["x"]
-        x2 = b["x"] if dx > 0 else b["x"] + b["w"]
-        y1, y2 = acy, bcy
-        mx = (x1 + x2) / 2.0
-        return [(x1, y1), (mx, y1), (mx, y2), (x2, y2)]
-    y1 = a["y"] + a["h"] if dy > 0 else a["y"]
-    y2 = b["y"] if dy > 0 else b["y"] + b["h"]
-    x1, x2 = acx, bcx
-    my = (y1 + y2) / 2.0
-    return [(x1, y1), (x1, my), (x2, my), (x2, y2)]
+def _port(box, side):
+    x, y, w, h = box["x"], box["y"], box["w"], box["h"]
+    return {"L": (x, y + h / 2.0), "R": (x + w, y + h / 2.0),
+            "T": (x + w / 2.0, y + h), "B": (x + w / 2.0, y)}[side]
+
+
+def _facing(A, B):
+    acx, acy = A["x"] + A["w"] / 2.0, A["y"] + A["h"] / 2.0
+    bcx, bcy = B["x"] + B["w"] / 2.0, B["y"] + B["h"] / 2.0
+    if abs(bcx - acx) >= abs(bcy - acy):
+        return ("R", "L") if bcx > acx else ("L", "R")
+    return ("T", "B") if bcy > acy else ("B", "T")
+
+
+def _pick_side(A, B, taken):
+    first, _ = _facing(A, B)
+    for side in [first] + [s for s in ("R", "B", "L", "T") if s != first]:
+        if side not in taken:
+            return side
+    return first
+
+
+def _ortho(A, B, sa, sb, gap=0.28):
+    ax, ay = _port(A, sa)
+    bx, by = _port(B, sb)
+    a_h, b_h = sa in ("L", "R"), sb in ("L", "R")
+    if a_h and b_h:
+        if sa == sb:
+            xo = max(ax, bx) + gap if sa == "R" else min(ax, bx) - gap
+            return [(ax, ay), (xo, ay), (xo, by), (bx, by)]
+        mid = (ax + bx) / 2.0
+        return [(ax, ay), (mid, ay), (mid, by), (bx, by)]
+    if (not a_h) and (not b_h):
+        if sa == sb:
+            yo = max(ay, by) + gap if sa == "T" else min(ay, by) - gap
+            return [(ax, ay), (ax, yo), (bx, yo), (bx, by)]
+        mid = (ay + by) / 2.0
+        return [(ax, ay), (ax, mid), (bx, mid), (bx, by)]
+    if a_h:
+        return [(ax, ay), (bx, ay), (bx, by)]
+    return [(ax, ay), (ax, by), (bx, by)]
+
+
+def route_page(shapes):
+    boxes = {s["id"]: s["bbox"] for s in shapes if not s["connector"] and s["type"] != "Guide"}
+    claimed = {sid: set() for sid in boxes}
+    routes = {}
+    for c in shapes:
+        if not c["connector"]:
+            continue
+        tos = [str(x["to"]) for x in (c.get("connects") or [])]
+        if len(tos) != 2 or tos[0] not in boxes or tos[1] not in boxes:
+            continue
+        a, b = tos
+        sa = _pick_side(boxes[a], boxes[b], claimed[a])
+        sb = _pick_side(boxes[b], boxes[a], claimed[b])
+        claimed[a].add(sa)
+        claimed[b].add(sb)
+        routes[c["id"]] = _ortho(boxes[a], boxes[b], sa, sb)
+    return routes
 
 
 def _text_em(text: str) -> float:

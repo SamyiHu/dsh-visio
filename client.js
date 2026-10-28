@@ -10,7 +10,7 @@ window.__ModuleLoader__.load({
     const PANEL_ID = 'dsh-visio'
     const POLL_MS = 2500
     // Bumped with every release: the footer shows it, so a stale bundle is obvious.
-    const CLIENT_BUILD = '1.16.2'
+    const CLIENT_BUILD = '1.16.3'
 
     /* ------------------------------------------------------------- locale */
 

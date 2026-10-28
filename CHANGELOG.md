@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.16.3
+- Connectors are laid out from the **relationship graph**, not drawn straight from the
+  stored cells: `engine/route_grammar.py` builds nodes/edges, gives every connector end its
+  own side, and routes orthogonally around obstacles.
+- The same module **checks the grammar** (axis-aligned, on-boundary, no crossing, no shared
+  port, decisions spread their branches over distinct sides) and reports violations instead
+  of shipping a broken picture.
+
+
 ## 1.16.2
 - Connectors attach to the **middle of the facing side** and route at right angles, so a line
   never stops short of a shape, dives into it at an angle, or leaves a dangling stub.
