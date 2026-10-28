@@ -40,6 +40,9 @@ window.__ModuleLoader__.load({
       textPlaceholder: '形状文字（支持多行）',
       geometry: '位置与大小',
       outOfPage: '已超出页面范围',
+      occlusion: '遮挡',
+      textBg: '文字背景遮挡',
+      textBgHint: '打开后文本框带白底，会遮住下面的连线',
       snapBack: '拉回页面',
       x: 'X',
       y: 'Y',
@@ -150,6 +153,9 @@ window.__ModuleLoader__.load({
       textPlaceholder: 'Shape text (multi-line)',
       geometry: 'Position and size',
       outOfPage: 'Outside the page',
+      occlusion: 'Occlusion',
+      textBg: 'Opaque text background',
+      textBgHint: 'Paints a white block behind the text so it hides lines underneath',
       snapBack: 'Bring back',
       x: 'X',
       y: 'Y',
@@ -392,6 +398,8 @@ window.__ModuleLoader__.load({
   background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px}
 .dshv-input:focus{outline:none;border-color:var(--dsw-alias-brand-primary)}
 textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px;padding:7px 8px;resize:vertical;line-height:1.5}
+.dshv-check{display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:6px;cursor:pointer}
+.dshv-check input{accent-color:var(--dsw-alias-brand-primary)}
 .dshv-warn{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px;color:var(--dsw-alias-state-error)}
 .dshv-row{display:flex;gap:6px;align-items:center}
 .dshv-grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;align-items:end}
@@ -1432,6 +1440,13 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
 
         h('div', { className: 'dshv-section' },
           h('div', { className: 'dshv-sectionTitle' }, t('style')),
+          h('label', { className: 'dshv-check', title: t('textBgHint') },
+            h('input', {
+              type: 'checkbox',
+              checked: Number(detail.cells && detail.cells.TextBkgnd ? detail.cells.TextBkgnd : 0) !== 0,
+              onChange: (e) => onCommitCell({ TextBkgnd: e.target.checked ? 1 : 0 }),
+            }),
+            h('span', null, t('textBg'))),
           h(ColorField, { label: t('fill'), value: style.fill, onCommit: (v) => onCommitCell({ FillForegnd: v, FillBkgnd: v }) }),
           h(ColorField, { label: t('line'), value: style.line, onCommit: (v) => onCommitCell({ LineColor: v }) }),
           h(Field, { label: t('weight') },

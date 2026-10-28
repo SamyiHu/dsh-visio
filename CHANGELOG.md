@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.15.3
+- The inspector has an **occlusion** switch for the text block (`TextBkgnd`): on = an opaque
+  white block behind the text, so lines underneath are hidden.
+
+
 ## 1.15.1
 - Dragging a connector label moves only the text block (`TxtPinX/TxtPinY`); the line keeps
   its endpoints.
