@@ -299,6 +299,7 @@ window.__ModuleLoader__.load({
 .dshv-canvasWrap::-webkit-scrollbar{width:12px;height:12px}
 .dshv-canvasWrap::-webkit-scrollbar-thumb{background:var(--dsw-alias-border-l2);border-radius:6px;border:3px solid transparent;background-clip:content-box}
 .dshv-canvasInner{display:flex;width:max-content;height:max-content;min-width:100%;min-height:100%;padding:24px;box-sizing:border-box}
+.dshv-page svg{overflow:visible}
 .dshv-page{margin:auto;max-width:none;box-shadow:0 8px 26px rgba(0,0,0,.16);border-radius:2px;background:transparent}
 
 /* ---- header */
@@ -784,6 +785,8 @@ textarea.dshv-input{height:auto;min-height:64px;padding:6px 7px;resize:vertical;
         if (!doc) return undefined
         const timer = setInterval(async () => {
           if (busy || !docRef.current) return
+          const active = typeof document !== 'undefined' ? document.activeElement : null
+          if (active && active.closest && active.closest('.dshv-right')) return
           try {
             const stat = await postJson(`${ROUTE}/op`, { action: 'stat', path: docRef.current.path })
             if (stat.mtime && docRef.current && Math.abs(stat.mtime - docRef.current.mtime) > 0.5) {
@@ -972,6 +975,8 @@ textarea.dshv-input{height:auto;min-height:64px;padding:6px 7px;resize:vertical;
         dragRef.current = null
         window.removeEventListener('pointermove', moveDrag)
         window.removeEventListener('pointerup', upDrag)
+        window.removeEventListener('pointercancel', upDrag)
+        window.removeEventListener('blur', upDrag)
         if (tipRef.current) tipRef.current.style.display = 'none'
         if (!drag) return
         drag.node.style.opacity = ''
@@ -994,7 +999,9 @@ textarea.dshv-input{height:auto;min-height:64px;padding:6px 7px;resize:vertical;
           { quiet: true, light: true },
         ).then((saved) => {
           if (!saved) return undefined
-          return postJson(`${ROUTE}/op`, { action: 'svg', path: current.path, page: current.page }).then((res) => {
+          return postJson(`${ROUTE}/op`, {
+            action: 'render', path: current.path, page: current.page, selected: drag.id,
+          }).then((res) => {
             if (!res || !res.svg) return
             setDoc((prev) => (prev ? {
               ...prev,
@@ -1051,6 +1058,10 @@ textarea.dshv-input{height:auto;min-height:64px;padding:6px 7px;resize:vertical;
         }
         window.addEventListener('pointermove', moveDrag)
         window.addEventListener('pointerup', upDrag)
+        // A release outside the window (or an OS-level cancel) used to leave the
+        // shape at 0.85 opacity, mid-transform, with a stale selection box.
+        window.addEventListener('pointercancel', upDrag)
+        window.addEventListener('blur', upDrag)
       }
 
       const ratio = doc ? doc.pageSize.h / doc.pageSize.w : 1

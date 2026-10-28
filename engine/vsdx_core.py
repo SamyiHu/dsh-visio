@@ -1330,7 +1330,8 @@ class Vsdx:
         out = []
         out.append(
             '<svg xmlns="http://www.w3.org/2000/svg" width="%0.0f" height="%0.0f" '
-            'viewBox="%0.4f %0.4f %0.4f %0.4f" font-family="Segoe UI, Arial, sans-serif">'
+            'overflow="visible" viewBox="%0.4f %0.4f %0.4f %0.4f" '
+            'font-family="Segoe UI, Arial, sans-serif">'
             % (view["w"] * 96, view["h"] * 96, view["x"], view["y"], view["w"], view["h"])
         )
         if background:

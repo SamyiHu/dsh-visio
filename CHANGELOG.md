@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.13.2
+- Drag: `pointercancel` / window `blur` end the drag, so a release outside the window no
+  longer leaves a shape at 85% opacity with a stale selection box.
+- Selection survives the post-drop refresh (`render` with `selected` instead of `svg`).
+- Polling pauses while the right pane has focus, so typing is never overwritten.
+- SVG root and page container no longer clip: a shape dragged past the page edge stays visible.
+
+
 ## 1.12.0
 - Relationship audit (`validate`): empty connectors, dangling ids, floating endpoints,
   zero-size shapes, connector labels.
