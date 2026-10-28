@@ -86,4 +86,4 @@ node tests/test_host_contract.mjs    # tool schema + routes + bridge round trip
 
 ## Licence
 
-MIT — see [LICENSE](LICENSE).  Test fixtures under `examples/` are original.
+MIT — see [LICENSE](LICENSE).  No third-party fixtures are bundled; tests build their own documents.
