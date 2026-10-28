@@ -1,5 +1,7 @@
 # dsh-visio
 
+[![CI](https://github.com/SamyiHu/dsh-visio/actions/workflows/ci.yml/badge.svg)](https://github.com/SamyiHu/dsh-visio/actions/workflows/ci.yml)
+
 A native **Visio (.vsdx) viewer and editor for the DeepSeek Harness (DSH) Web UI**, with a
 live preview, shape editing and a `visio` agent tool.  Pure Python engine, no Visio install,
 no Office dependency.
@@ -91,3 +93,16 @@ node tests/test_host_contract.mjs    # tool schema + routes + bridge round trip
 ## Licence
 
 MIT — see [LICENSE](LICENSE).  No third-party fixtures are bundled; tests build their own documents.
+
+
+## CI
+
+`.github/workflows/ci.yml` runs on every push/PR across Linux and Windows:
+
+- `node --check` on both halves, `py_compile` on the engine
+- `tests/test_engine.py` (15 cases: edit, connectors, stencils, snapshots)
+- `tests/test_client_render.mjs` and `tests/test_client_contract.mjs` (slots + 94 translations)
+- `tests/test_host_contract.mjs` (tool schema, routes, bridge round trip)
+
+`release.yml` publishes a zip on every `v*` tag, after the same test suite, and refuses a tag
+that does not match `package.json` version.
