@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.14.2
+- Geometry fields share one 4-column grid: no field can grow wider than its neighbours.
+- The text box is 104px tall (was 64px) and resizable.
+
+
 ## 1.14.1
 - Geometry is kept inside the page: drag clamps to the page box, and typing X/Y/W/H clamps too.
 - The inspector shows a red "outside the page" warning with a one-click "bring back" action.
