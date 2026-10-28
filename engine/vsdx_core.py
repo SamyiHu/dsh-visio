@@ -61,15 +61,22 @@ def _shape_text(el) -> str:
     return "".join(t.itertext()).strip()
 
 
-def _set_shape_text(el, text: str):
+def _set_shape_text(el, text: str, runs: int = 0):
+    """Replace the text; with `runs` > 0 keep per-line <cp IX> colour runs."""
     t = el.find(_v("Text"))
     if t is None:
         t = ET.SubElement(el, _v("Text"))
     for child in list(t):
         t.remove(child)
-    for node in list(t):
-        t.remove(node)
-    t.text = text
+    t.text = None
+    if runs <= 0:
+        t.text = text
+        return
+    parts = text.split("\n")
+    for i, line in enumerate(parts):
+        cp = ET.SubElement(t, _v("cp"))
+        cp.set("IX", str(min(i, runs - 1)))
+        cp.tail = ("\n" if i else "") + line
 
 
 def _rgb(value, default=None):
@@ -348,7 +355,11 @@ class Vsdx:
         part, root = self._page_root(page)
         for sh, _p, _d in self._iter_shapes(root.find(_v("Shapes"))):
             if sh.get("ID") == str(shape_id):
-                _set_shape_text(sh, text)
+                run_count = 0
+                for sec in sh.findall(_v("Section")):
+                    if sec.get("N") == "Character":
+                        run_count = len(sec.findall(_v("Row")))
+                _set_shape_text(sh, text, run_count)
                 self._write_page(part, root)
                 return True
         raise VsdxError("shape %s not found on page %d" % (shape_id, page))
@@ -380,6 +391,26 @@ class Vsdx:
         """Move / resize by bounding box (inches, origin bottom-left)."""
         det = self.shape(shape_id, page)
         cells = det["cells"]
+        meta = next((sh for sh in self.shapes(page) if sh["id"] == str(shape_id)), None)
+        if meta and meta.get("connector"):
+            # A 1-D shape has no meaningful Width/Height: translating it rewrites the
+            # endpoints instead, which is what Visio does when you drag a connector.
+            bbox = meta["bbox"]
+            dx = (float(x) - bbox["x"]) if x is not None else 0.0
+            dy = (float(y) - bbox["y"]) if y is not None else 0.0
+            try:
+                begin_x = float(cells["BeginX"]) + dx
+                begin_y = float(cells["BeginY"]) + dy
+                end_x = float(cells["EndX"]) + dx
+                end_y = float(cells["EndY"]) + dy
+            except (KeyError, TypeError, ValueError):
+                raise VsdxError("connector %s has no endpoints" % shape_id)
+            return self.set_cells(shape_id, {
+                "BeginX": round(begin_x, 6), "BeginY": round(begin_y, 6),
+                "EndX": round(end_x, 6), "EndY": round(end_y, 6),
+                "PinX": round((begin_x + end_x) / 2.0, 6),
+                "PinY": round((begin_y + end_y) / 2.0, 6),
+            }, page)
         try:
             cur_w = float(cells.get("Width") or 0.0)
             cur_h = float(cells.get("Height") or 0.0)
@@ -988,6 +1019,8 @@ class Vsdx:
         if pattern == "0":
             fill = None
         line = color("LineColor") or shade(accent, 0.76) or theme.get("dk1")
+        if str(scalar("LinePattern", "1")) == "0":
+            line = None
 
         text_color, font_pt = None, None
         units = det.get("units") or {}
@@ -1483,6 +1516,8 @@ class Vsdx:
                 out.append('<text x="%0.3f" y="%0.3f" font-size="0.09" fill="#C0392B" text-anchor="start">#%s</text>'
                            % (x, y - 0.03, s["id"]))
             out.append("</g>")
+        _shape_out = out
+        out = []
         for s in shapes:
             if not s["connector"]:
                 continue
@@ -1530,6 +1565,12 @@ class Vsdx:
                                % (mx, my + (i - (len(label) - 1) / 2.0) * 0.105, _esc(ln[:60])))
             out.append("</g>")
         out.append("</svg>")
+        _k = 0
+        while _k < len(_shape_out) and not _shape_out[_k].startswith('<g'):
+            _k += 1
+        _close = [c for c in out if c.strip() == '</svg>']
+        _conn = [c for c in out if c.strip() != '</svg>']
+        out = _shape_out[:_k] + _conn + _shape_out[_k:] + _close
         return "\n".join(out)
 
     def save_svg(self, out_path: str, page: int = 1, show_ids: bool = False) -> str:

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.15.0
+- Connectors move by their endpoints: dragging a connector (or its label) no longer
+  rewrites Width/Height, which used to collapse the line.
+- Editing text keeps the Character runs, so per-line colours survive a text edit.
+- LinePattern 0 means no outline; connectors are drawn behind shapes so labels stay readable.
+- `tests/make_uicheck.mjs`: renders the inspector in a real browser and measures the boxes.
+
+
 ## 1.14.4
 - The text box spans the full inspector width (it was sized by the browser's default `cols`),
   and its height dropped to 74px (3 rows), still resizable.
