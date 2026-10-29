@@ -838,6 +838,21 @@ def action_move_segment(req):
     return build_state(path, page, sid, notice="走线已调整", saved=True)
 
 
+def action_reglue(req):
+    """Re-attach one end of a connector (drag an end handle onto another shape)."""
+    path = drawing_path(req.get("path"))
+    doc = load_doc(path)
+    page = page_of(req.get("page"), doc.pages)
+    sid = text(req.get("shape_id"), "shape_id", 40)
+    end = text(req.get("end"), "end", 10) or "end"
+    to = text(req.get("to"), "to", 40)
+    if not to:
+        raise BadRequest("to is required")
+    doc.reglue(sid, end, to, x=req.get("x"), y=req.get("y"), page=page)
+    save_doc(doc, req.get("backup", True))
+    return build_state(path, page, sid, notice="端点已重新连接", saved=True)
+
+
 ACTIONS = {
     "ping": action_ping,
     "list": action_list,
@@ -862,6 +877,7 @@ ACTIONS = {
     "probe": action_probe,
     "bend": action_bend,
     "move_segment": action_move_segment,
+    "reglue": action_reglue,
     "route_style": action_route_style,
     "set_route": action_set_route,
     "clear_route": action_clear_route,

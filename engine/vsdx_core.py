@@ -898,6 +898,49 @@ class Vsdx:
                 clean.append(pt)
         return self.set_route(shape_id, clean, page=page)
 
+    def reglue(self, shape_id, end, to_id, x=None, y=None, page: int = 1):
+        """Re-attach one end of a connector to another shape (drag the end handle).
+
+        Visio keeps its glue rows in the page-level `<Connects>` element, not inside
+        the shape, so that is where the row has to be rewritten.
+        """
+        if str(end) not in ("start", "end"):
+            raise VsdxError("end must be start or end")
+        det = self.shape(shape_id, page)
+        c = det["cells"]
+        prefix = "Begin" if end == "start" else "End"
+        if x is None or y is None:
+            target = next((s for s in self.shapes(page) if s["id"] == str(to_id)), None)
+            if target is None:
+                raise VsdxError("shape %s not found" % to_id)
+            b = target["bbox"]
+            x = b["x"] + b["w"] / 2.0
+            y = b["y"] + b["h"] / 2.0
+        part, root = self._page_root(page)
+        conns = root.find(_v("Connects"))
+        if conns is None:
+            conns = ET.SubElement(root, _v("Connects"))
+        # drop the old row for this end, then write a fresh one
+        for row in list(conns.findall(_v("Connect"))):
+            if row.get("FromSheet") == str(shape_id) and row.get("FromCell") == prefix + "X":
+                conns.remove(row)
+        row = ET.SubElement(conns, _v("Connect"))
+        row.set("FromSheet", str(shape_id))
+        row.set("FromCell", prefix + "X")
+        row.set("ToSheet", str(to_id))
+        row.set("ToCell", "PinX")
+        for sh, _p, _d in self._iter_shapes(root.find(_v("Shapes"))):
+            if sh.get("ID") != str(shape_id):
+                continue
+            for name, value in ((prefix + "X", x), (prefix + "Y", y)):
+                cell = _cell(sh, name)
+                cell.set("V", str(round(float(value), 6)))
+                if "F" in cell.attrib:
+                    del cell.attrib["F"]
+            break
+        self._write_page(part, root)
+        return {"ok": True, "shape_id": str(shape_id), "end": str(end), "to": str(to_id)}
+
     def bend(self, shape_id, x, y, page: int = 1):
         """Insert a bend at (x, y): the connector keeps its ends and gains a corner."""
         pts = self._connector_points(shape_id, page)

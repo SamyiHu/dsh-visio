@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.20.0
+- **Fixed the segment handles never appearing**: they were appended after `</svg>`, so the
+  browser never rendered them. That is why dragging a connector did nothing.
+- Every connector end now has a red square handle; dragging it re-glues that end to the
+  nearest shape (`reglue`, which writes the page-level `<Connects>` row Visio actually uses).
+- A **connect tool** in the toolbar: click a shape, then a second one, and a connector is
+  created between them.
+
+
 ## 1.19.1
 - Connector editing now works the way Visio does: every run of a selected connector gets a
   handle at its middle, and dragging it slides that run (horizontal runs move up/down,

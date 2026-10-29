@@ -10,7 +10,7 @@ window.__ModuleLoader__.load({
     const PANEL_ID = 'dsh-visio'
     const POLL_MS = 2500
     // Bumped with every release: the footer shows it, so a stale bundle is obvious.
-    const CLIENT_BUILD = '1.19.1'
+    const CLIENT_BUILD = '1.20.0'
 
     /* ------------------------------------------------------------- locale */
 
@@ -48,6 +48,8 @@ window.__ModuleLoader__.load({
       route_left: '左侧',
       route_right: '右侧',
       route_auto: '自动',
+      linkTool: '连线工具',
+      linkPickTarget: '已选起点 #{id}，再点目标形状完成连线',
       textBg: '文字背景遮挡',
       textBgHint: '打开后文本框带白底，会遮住下面的连线',
       snapBack: '拉回页面',
@@ -172,6 +174,8 @@ window.__ModuleLoader__.load({
       route_left: 'Left',
       route_right: 'Right',
       route_auto: 'Auto',
+      linkTool: 'Connect tool',
+      linkPickTarget: 'Start #{id} picked, now click the target shape',
       textBg: 'Opaque text background',
       textBgHint: 'Paints a white block behind the text so it hides lines underneath',
       snapBack: 'Bring back',
@@ -585,6 +589,14 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           ? shape.points
           : [[shape.bbox.x, shape.bbox.y], [shape.bbox.x + shape.bbox.w, shape.bbox.y + shape.bbox.h]]
         let handles = ''
+        // the two ends: dragging one re-glues that end to the nearest shape
+        for (const [tag, idx] of [['start', 0], ['end', pts.length - 1]]) {
+          const [ex, ey] = pts[idx]
+          handles += '<g data-route-end="' + shape.id + '" data-end="' + tag + '" style="cursor:pointer">'
+            + '<rect x="' + (ex - 0.09) + '" y="' + (pageHeight - ey - 0.09) + '" width="0.18" height="0.18"'
+            + ' fill="#E5484D" fill-opacity="0.9" stroke="#FFFFFF" stroke-width="1"'
+            + ' vector-effect="non-scaling-stroke"/></g>'
+        }
         for (let i = 0; i < pts.length - 1; i += 1) {
           const [ax, ay] = pts[i]
           const [bx, by] = pts[i + 1]
@@ -597,7 +609,10 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
             + ' fill="#2F6FBF" fill-opacity="0.85" stroke="#FFFFFF" stroke-width="1"'
             + ' vector-effect="non-scaling-stroke"/></g>'
         }
-        return svg + handles
+        // must go *inside* the svg element, otherwise the browser never renders it
+        const close = svg.lastIndexOf('</svg>')
+        if (close < 0) return svg
+        return svg.slice(0, close) + handles + svg.slice(close)
       }
       if (!svg || !shape || !shape.bbox || shape.connector) return svg
       const box = shape.bbox
@@ -685,6 +700,7 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
       const [stencilError, setStencilError] = useState('')
       const [zoom, setZoom] = useState(null)
       const [tool, setTool] = useState('select')
+      const [linkFrom, setLinkFrom] = useState(null)
       const toolRef = useRef('select')
       toolRef.current = tool
       const pageRef = useRef(null)
@@ -1077,8 +1093,24 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
 
       const onCanvasClick = (event) => {
         const node = event.target instanceof Element ? event.target.closest('[data-shape-id]') : null
+        const id = node ? node.getAttribute('data-shape-id') : null
+        if (tool === 'link') {
+          const current = docRef.current
+          const target = current && id ? current.shapes.find((item) => item.id === id) : null
+          if (!target || target.connector) return
+          if (!linkFrom) {
+            setLinkFrom(id)
+            setNotice(t('linkPickTarget', { id }))
+            return
+          }
+          if (linkFrom === id) return
+          runOp({ action: 'connect', path: current.path, page: current.page, from: linkFrom, to: id })
+            .then((state) => { if (state) setDoc(state) })
+          setLinkFrom(null)
+          setNotice(t('connectedTo', { id }))
+          return
+        }
         if (node) {
-          const id = node.getAttribute('data-shape-id')
           if (id) openSelected(id)
           return
         }
@@ -1287,6 +1319,55 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
             panRef.current = null
             window.removeEventListener('pointermove', move)
             window.removeEventListener('pointerup', up)
+          }
+          window.addEventListener('pointermove', move)
+          window.addEventListener('pointerup', up)
+          return
+        }
+        const endHandle = event.target instanceof Element ? event.target.closest('[data-route-end]') : null
+        if (endHandle) {
+          event.preventDefault()
+          const current = docRef.current
+          const svgEl = event.currentTarget.querySelector('svg')
+          if (!current || !svgEl) return
+          const box = svgEl.getBoundingClientRect()
+          const vb = svgEl.viewBox && svgEl.viewBox.baseVal ? svgEl.viewBox.baseVal : null
+          if (!vb || !box.width) return
+          const scale = box.width / vb.width
+          const start = { x: event.clientX, y: event.clientY }
+          const shapeId = endHandle.getAttribute('data-route-end')
+          const which = endHandle.getAttribute('data-end')
+          const move = (e) => {
+            const tip = tipRef.current
+            if (!tip || !tip.parentElement) return
+            const host = tip.parentElement.getBoundingClientRect()
+            const x = ((e.clientX - box.left) / scale).toFixed(2)
+            const y = (vb.height - (e.clientY - box.top) / scale).toFixed(2)
+            tip.style.display = 'block'
+            tip.style.left = `${e.clientX - host.left + 14}px`
+            tip.style.top = `${e.clientY - host.top - 30}px`
+            tip.textContent = `${which === 'start' ? '起点' : '终点'} X ${x}  Y ${y}`
+          }
+          const up = (e) => {
+            window.removeEventListener('pointermove', move)
+            window.removeEventListener('pointerup', up)
+            if (tipRef.current) tipRef.current.style.display = 'none'
+            if (Math.abs(e.clientX - start.x) + Math.abs(e.clientY - start.y) < 3) return
+            const wx = (e.clientX - box.left) / scale
+            const wy = vb.height - (e.clientY - box.top) / scale
+            let bestId = null
+            let bestD = 1e9
+            for (const item of current.shapes) {
+              if (item.connector || !item.bbox) continue
+              const b = item.bbox
+              const cx = Math.min(Math.max(wx, b.x), b.x + b.w)
+              const cy = Math.min(Math.max(wy, b.y), b.y + b.h)
+              const d = (cx - wx) ** 2 + (cy - wy) ** 2
+              if (d < bestD) { bestD = d; bestId = item.id }
+            }
+            if (!bestId) return
+            runOp({ action: 'reglue', path: current.path, page: current.page,
+              shape_id: shapeId, end: which, to: bestId, x: wx, y: wy })
           }
           window.addEventListener('pointermove', move)
           window.addEventListener('pointerup', up)
@@ -1567,6 +1648,11 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
                     h('button', { type: 'button', className: 'dshv-zbtn', title: t('zoomOut'), onClick: () => setZoom((v) => Math.max(0.15, Math.round((v ?? 1) * 0.8 * 1000) / 1000)) }, '\u2212'),
                     h('button', { type: 'button', className: 'dshv-zbtn dshv-zfit', title: t('zoomFit'), onClick: () => setZoom(null) }, zoom ? `${Math.round(zoom * 100)}%` : t('zoomFit')),
                     h('button', { type: 'button', className: 'dshv-zbtn', title: t('zoomIn'), onClick: () => setZoom((v) => Math.min(8, Math.round((v ?? 1) * 1.25 * 1000) / 1000)) }, '+'),
+                    h('button', { type: 'button',
+                      className: `dshv-zbtn${tool === 'link' ? ' on' : ''}`,
+                      title: t('linkTool'),
+                      onClick: () => { setTool((v) => (v === 'link' ? 'select' : 'link')); setLinkFrom(null) },
+                    }, '\u2192'),
                     h('button', { type: 'button',
                       className: `dshv-zbtn${tool === 'hand' ? ' on' : ''}`,
                       title: t('handTool'),
