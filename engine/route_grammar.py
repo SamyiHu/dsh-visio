@@ -9,6 +9,20 @@ flowchart invariants, so a broken picture can never be produced silently:
   * every end lands on the boundary of the node it belongs to;
   * no segment passes through a shape that is not one of its two ends;
   * no two connectors share a side of the same shape.
+
+The four sides are exactly the four connection points a default 2-D shape gets in
+Visio (left, bottom, right, top edge midpoints, normals pointing outwards), so the
+rules above map one-to-one onto Visio's glue model:
+
+  R1  a connector leaves/enters perpendicular to the side it is glued to;
+  R2  one connection point carries at most one connector  (`port-shared`);
+  R3  segments stay horizontal or vertical                     (`not-orthogonal`);
+  R4  a connector never crosses an unrelated shape             (`crosses-shape`);
+  R5  branches of one shape spread over distinct points        (`decision-ports`).
+
+Shapes that declare their own `Section N="Connection"` rows are not read yet: their
+extra points would need `assign()` to consider per-point normals.  That is the next
+step, not something this module pretends to support.
 """
 
 EPS = 1e-6
