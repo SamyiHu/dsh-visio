@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.18.3
+- The floating canvas can no longer be dragged under the app chrome: the title bar always
+  stays reachable, and a geometry saved on a larger screen is clamped when it opens.
+- `Esc` closes the floating window, and a reset button (top right) puts it back on screen,
+  so a stuck window is always recoverable.
+
+
 ## 1.18.2
 - The floating canvas window can be moved from a dedicated handle on its left edge, not
   only by its title bar.

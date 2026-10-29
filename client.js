@@ -10,7 +10,7 @@ window.__ModuleLoader__.load({
     const PANEL_ID = 'dsh-visio'
     const POLL_MS = 2500
     // Bumped with every release: the footer shows it, so a stale bundle is obvious.
-    const CLIENT_BUILD = '1.18.2'
+    const CLIENT_BUILD = '1.18.3'
 
     /* ------------------------------------------------------------- locale */
 
@@ -122,6 +122,7 @@ window.__ModuleLoader__.load({
       floatTip: '打开浮动画布窗口（可拖动、可改大小）',
       floatTitle: 'Visio 图纸 · 浮动画布',
       floatMove: '拖动移动',
+      floatReset: '复位位置（Esc 关闭）',
       floatClose: '收起窗口',
       fixUnits: '修复单位',
       fixUnitsTip: '把文件里标错的单位（U=MM/PT）改回 Visio 内部单位，修正 Visio 打开时页面/字号/线宽异常',
@@ -238,6 +239,7 @@ window.__ModuleLoader__.load({
       floatTip: 'Open the floating Visio canvas (drag and resize)',
       floatTitle: 'Visio drawing · floating canvas',
       floatMove: 'Drag to move',
+      floatReset: 'Reset position (Esc closes)',
       floatClose: 'Close window',
       fixUnits: 'Fix units',
       fixUnitsTip: 'Rewrite mislabelled cell units (U=MM/PT) to Visio internal units so page size, font size and line weight match',
@@ -1778,6 +1780,7 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
 .dshv-floatClose{width:24px;height:24px;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary);
   font-size:16px;line-height:1;cursor:pointer}
 .dshv-floatClose:hover{background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary)}
+.dshv-floatBtns{display:flex;align-items:center;gap:2px}
 .dshv-floatBody{flex:1;min-height:0;overflow:hidden;display:flex}
 .dshv-floatBody > .dshv-root{flex:1;min-width:0;height:100%}
 .dshv-floatMove{position:absolute;left:6px;top:50%;transform:translateY(-50%);width:14px;height:44px;
@@ -1897,10 +1900,46 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           setRestoreGeom(null)
         }
       }
-      const startDrag = (event) => track(event, (start, e) => ({
+      const clampGeom = (g) => {
+        const vw = window.innerWidth || 1280
+        const vh = window.innerHeight || 800
+        // keep the title bar (and its close button) inside the viewport at all times,
+        // and never let the window slide under the app chrome
+        const w = Math.min(Math.max(360, g.w), vw - 16)
+        const h = Math.min(Math.max(280, g.h), vh - 16)
+        return {
+          w,
+          h,
+          x: Math.min(Math.max(8, g.x), vw - Math.min(w, 220) - 8),
+          y: Math.min(Math.max(8, g.y), vh - 48),
+        }
+      }
+      const resetGeom = () => {
+        const vw = window.innerWidth || 1280
+        const vh = window.innerHeight || 800
+        const w = Math.min(1280, Math.max(620, Math.round(vw * 0.66)))
+        const h = Math.min(840, Math.max(460, Math.round(vh * 0.82)))
+        remember(clampGeom({ x: Math.max(16, vw - w - 24), y: 72, w, h }))
+        setRestoreGeom(null)
+      }
+
+      useEffect(() => {
+        if (!open) return undefined
+        const fixed = clampGeom(geomRef.current)
+        if (fixed.x !== geomRef.current.x || fixed.y !== geomRef.current.y
+            || fixed.w !== geomRef.current.w || fixed.h !== geomRef.current.h) {
+          remember(fixed)
+        }
+        const onKey = (event) => {
+          if (event.key === 'Escape') setOpen(false)
+        }
+        window.addEventListener('keydown', onKey)
+        return () => window.removeEventListener('keydown', onKey)
+      }, [open])
+      const startDrag = (event) => track(event, (start, e) => clampGeom({
         ...start.geom,
-        x: Math.min(Math.max(120 - start.geom.w, start.geom.x + e.clientX - start.x), window.innerWidth - 160),
-        y: Math.min(Math.max(0, start.geom.y + e.clientY - start.y), window.innerHeight - 90),
+        x: start.geom.x + e.clientX - start.x,
+        y: start.geom.y + e.clientY - start.y,
       }))
       const startResize = (event) => track(event, (start, e) => ({
         ...start.geom,
@@ -1920,11 +1959,17 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           ? h('div', { className: 'dshv-float', style: { left: geom.x, top: geom.y, width: geom.w, height: geom.h } },
               h('div', { className: 'dshv-floatBar', onPointerDown: startDrag, onDoubleClick: maximize },
                 h('span', { className: 'dshv-floatTitle' }, t('floatTitle')),
-                h('button', { type: 'button',
-                  className: 'dshv-floatClose',
-                  title: t('floatClose'),
-                  onClick: (event) => { event.stopPropagation(); setOpen(false) },
-                }, '\u00d7')),
+                h('div', { className: 'dshv-floatBtns' },
+                  h('button', { type: 'button',
+                    className: 'dshv-floatClose',
+                    title: t('floatReset'),
+                    onClick: (event) => { event.stopPropagation(); resetGeom() },
+                  }, '\u2316'),
+                  h('button', { type: 'button',
+                    className: 'dshv-floatClose',
+                    title: t('floatClose'),
+                    onClick: (event) => { event.stopPropagation(); setOpen(false) },
+                  }, '\u00d7'))),
               h('div', { className: 'dshv-floatBody' }, h(VisioPanel, props)),
               h('div', { className: 'dshv-floatMove', title: t('floatMove'), onPointerDown: startDrag },
                 '\u22ee\u22ee'),
