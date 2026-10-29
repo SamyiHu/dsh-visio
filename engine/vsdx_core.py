@@ -862,7 +862,9 @@ class Vsdx:
     def drawn_points(self, shape_id, page: int = 1):
         """The polyline actually rendered for this connector (manual beats automatic)."""
         manual = self.geometry_points(shape_id, page)
-        if len(manual) > 2:
+        # A hand-drawn route wins even when it is a plain two-point line: otherwise
+        # the router would silently take back a connector the user straightened.
+        if len(manual) >= 2:
             return self._simplify(manual)
         routes, _issues = self.page_routes(page)
         if routes.get(str(shape_id)):
@@ -872,65 +874,59 @@ class Vsdx:
     def move_segment(self, shape_id, index, delta, page: int = 1):
         """Slide one run of a connector, Visio style.
 
-        The two end points never move; a straight connector is first split into a
-        three-run detour so there is a corner to slide.
+        Contract (the panel interaction tests assert every line of it):
+          * the two glued end points never move;
+          * only the run under the cursor travels, by 'delta' along its normal;
+          * the result stays axis aligned, so every corner is still a corner;
+          * a two-point connector grows a jog first, because a straight run that
+            touches an end has nothing it could slide without dragging that end.
         """
         # start from the polyline that is on screen, not the stored Begin/End pair:
         # otherwise the first drag throws away the automatic route
-        pts = self.drawn_points(shape_id, page)
+        pts = list(self.drawn_points(shape_id, page))
         if len(pts) < 2:
             raise VsdxError("connector %s has no geometry" % shape_id)
         i = int(index)
         if i < 0 or i >= len(pts) - 1:
             raise VsdxError("segment %s does not exist" % index)
+        if not delta:
+            return {"ok": True, "shape_id": str(shape_id), "points": len(pts), "delta": 0.0}
 
+        horizontal = abs(pts[i + 1][1] - pts[i][1]) <= abs(pts[i + 1][0] - pts[i][0])
         if len(pts) == 2:
+            # A straight connector has no interior run: give it a jog whose middle
+            # run sits at the requested offset.  The ends stay exactly where they are.
             ax, ay = pts[0]
             bx, by = pts[1]
-            if abs(by - ay) <= abs(bx - ax):
-                # horizontal run: a vertical detour at the middle, then slide it up/down
-                mid = (ax + bx) / 2.0
-                pts = [(ax, ay), (mid, ay), (mid, by), (bx, by)]
-                i = 0
+            third = 1.0 / 3.0
+            if horizontal:
+                m1 = ax + (bx - ax) * third
+                m2 = ax + (bx - ax) * (1.0 - third)
+                jog = [(ax, ay), (m1, ay), (m1, ay + delta), (m2, ay + delta),
+                       (m2, ay), (bx, by)]
             else:
-                # vertical run: a sideways detour, then slide it left/right
-                mid = (ay + by) / 2.0
-                pts = [(ax, ay), (ax + delta, ay), (ax + delta, by), (bx, by)]
-                i = 1
-                out = list(pts)
-                clean = [out[0]]
-                for pt in out[1:]:
-                    if abs(pt[0] - clean[-1][0]) > 1e-6 or abs(pt[1] - clean[-1][1]) > 1e-6:
-                        clean.append(pt)
-                return self.set_route(shape_id, clean, page=page)
+                m1 = ay + (by - ay) * third
+                m2 = ay + (by - ay) * (1.0 - third)
+                jog = [(ax, ay), (ax, m1), (ax + delta, m1), (ax + delta, m2),
+                       (ax, m2), (bx, by)]
+            return self.set_route(shape_id, self._simplify(jog), page=page)
 
         ax, ay = pts[i]
         bx, by = pts[i + 1]
-        horizontal = abs(by - ay) <= abs(bx - ax)
-        out = list(pts)
         if horizontal:
-            out[i] = (ax, ay + delta)
-            out[i + 1] = (bx, by + delta)
-            if i > 0:                                # previous corner keeps its x
-                px, _py = out[i - 1]
-                out[i - 1] = (px, ay + delta)
-            if i + 2 < len(out):                     # next corner keeps its x
-                nx, _ny = out[i + 2]
-                out[i + 2] = (nx, by + delta)
+            moved = [(ax, ay + delta), (bx, by + delta)]
         else:
-            out[i] = (ax + delta, ay)
-            out[i + 1] = (bx + delta, by)
-            if i > 0:
-                _px, py = out[i - 1]
-                out[i - 1] = (ax + delta, py)
-            if i + 2 < len(out):
-                _nx, ny = out[i + 2]
-                out[i + 2] = (bx + delta, ny)
-        clean = [out[0]]
-        for pt in out[1:]:
-            if abs(pt[0] - clean[-1][0]) > 1e-6 or abs(pt[1] - clean[-1][1]) > 1e-6:
-                clean.append(pt)
-        return self.set_route(shape_id, clean, page=page)
+            moved = [(ax + delta, ay), (bx + delta, by)]
+        # Neighbouring runs are perpendicular and share this run x (or y), so they
+        # stay axis aligned without being touched.  A run that touches an end is
+        # replaced by a short stub plus the moved run, so the end itself never moves.
+        if i == 0:
+            out = [pts[0]] + moved + pts[2:]
+        elif i == len(pts) - 2:
+            out = pts[:i] + moved + [pts[-1]]
+        else:
+            out = pts[:i] + moved + pts[i + 2:]
+        return self.set_route(shape_id, self._simplify(out), page=page)
 
     def reglue(self, shape_id, end, to_id, x=None, y=None, page: int = 1):
         """Re-attach one end of a connector to another shape (drag the end handle).
@@ -983,12 +979,78 @@ class Vsdx:
                 continue
             for name, value in ((prefix + "X", x), (prefix + "Y", y)):
                 cell = _cell(sh, name)
+                if cell is None:
+                    cell = ET.SubElement(sh, _v("Cell"))
+                    cell.set("N", name)
                 cell.set("V", str(round(float(value), 6)))
                 if "F" in cell.attrib:
                     del cell.attrib["F"]
+            # A connector with a hand-drawn route must move its end in the polyline
+            # as well: otherwise the glue says one thing and the picture another.
+            self._move_route_end(sh, end, x, y)
             break
         self._write_page(part, root)
         return {"ok": True, "shape_id": str(shape_id), "end": str(end), "to": str(to_id)}
+
+    @staticmethod
+    def _route_rows(sh):
+        """The geometry rows of a connector plus the origin its offsets use."""
+        geo = None
+        for sec in sh.findall(_v("Section")):
+            if sec.get("N") == "Geometry":
+                geo = sec
+                break
+        if geo is None:
+            return None, None, []
+        rows = [r for r in geo.findall(_v("Row"))
+                if r.get("T") in ("MoveTo", "LineTo", "RelMoveTo", "RelLineTo")]
+        try:
+            ox = float(_cellv(sh, "PinX") or 0) - float(_cellv(sh, "LocPinX") or 0)
+            oy = float(_cellv(sh, "PinY") or 0) - float(_cellv(sh, "LocPinY") or 0)
+        except ValueError:
+            return None, None, []
+        pts = []
+        for row in rows:
+            try:
+                pts.append((float(_cellv(row, "X") or 0) + ox,
+                            float(_cellv(row, "Y") or 0) + oy))
+            except ValueError:
+                return None, None, []
+        return geo, (ox, oy), pts
+
+    @classmethod
+    def _write_route_rows(cls, geo, origin, points):
+        """Replace a connector geometry section with an explicit polyline."""
+        for row in list(geo.findall(_v("Row"))):
+            geo.remove(row)
+        ox, oy = origin
+        for i, (px, py) in enumerate(points):
+            row = ET.SubElement(geo, _v("Row"))
+            row.set("T", "MoveTo" if i == 0 else "LineTo")
+            row.set("IX", str(i))
+            for name, value in (("X", px - ox), ("Y", py - oy)):
+                c = ET.SubElement(row, _v("Cell"))
+                c.set("N", name)
+                c.set("V", str(round(value, 6)))
+
+    def _move_route_end(self, sh, end, x, y):
+        """Move a hand-drawn connector end, keeping the route axis aligned."""
+        geo, origin, pts = self._route_rows(sh)
+        if geo is None or len(pts) < 2:
+            return False
+        x, y = float(x), float(y)
+        if str(end) == "start":
+            if len(pts) == 2:
+                pts = [(x, y), (pts[1][0], y), pts[1]]
+            else:
+                pts = [(x, y), (x, pts[1][1])] + pts[1:]
+        else:
+            if len(pts) == 2:
+                pts = [pts[0], (pts[0][0], y), (x, y)]
+            else:
+                pts = pts[:-1] + [(pts[-2][0], y), (x, y)]
+        self._write_route_rows(geo, origin, self._simplify(pts))
+        return True
 
     def bend(self, shape_id, x, y, page: int = 1):
         """Insert a bend at (x, y): the connector keeps its ends and gains a corner."""

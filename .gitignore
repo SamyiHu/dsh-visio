@@ -7,4 +7,6 @@ __pycache__/
 examples/*.png
 _electron-install.log
 tests/_uicheck.html
+tests/vendor/
+tests/fixtures/_live.vsdx
 _uicheck.html

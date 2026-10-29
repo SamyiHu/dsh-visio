@@ -338,9 +338,13 @@ window.__ModuleLoader__.load({
   background-attachment:local}
 .dshv-canvasWrap::-webkit-scrollbar{width:12px;height:12px}
 .dshv-canvasWrap::-webkit-scrollbar-thumb{background:var(--dsw-alias-border-l2);border-radius:6px;border:3px solid transparent;background-clip:content-box}
-.dshv-canvasInner{display:flex;width:max-content;height:max-content;min-width:100%;min-height:100%;padding:24px;box-sizing:border-box}
+.dshv-canvasInner{display:flex;align-items:flex-start;justify-content:center;
+  width:max-content;height:max-content;min-width:100%;min-height:100%;
+  /* bottom room for the floating zoom bar: without it the bar sits on the page
+     edge and can cover a connector handle near the bottom */
+  padding:24px 24px 76px;box-sizing:border-box}
 .dshv-page svg{overflow:visible}
-.dshv-page{margin:auto;max-width:none;box-shadow:0 8px 26px rgba(0,0,0,.16);border-radius:2px;background:transparent}
+.dshv-page{margin:0 auto;max-width:none;box-shadow:0 8px 26px rgba(0,0,0,.16);border-radius:2px;background:transparent}
 
 /* ---- header */
 .dshv-head{padding:10px 16px;background:var(--dsw-alias-bg-layer-1);border-bottom:1px solid var(--dsw-alias-border-l2)}
@@ -450,7 +454,8 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
 .dshv-shapeId{font:11px ui-monospace,Consolas,monospace;color:var(--dsw-alias-label-secondary);flex:0 0 24px}
 .dshv-shapeText{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dshv-shapeKind{font-size:10px;color:var(--dsw-alias-label-secondary);flex:0 0 auto}
-.dshv-canvasOuter{position:relative;flex:1;min-height:0;min-width:0;display:flex;overflow:hidden}
+.dshv-canvasOuter{position:relative;flex:1;min-height:0;min-width:0;display:flex;
+  flex-direction:column;overflow:hidden}
 .dshv-canvasWrap{flex:1;min-height:0;min-width:0;overflow:auto;padding:20px;display:flex;justify-content:center;align-items:center;position:relative}
 .dshv-page{position:relative;background:transparent;box-shadow:0 8px 26px rgba(0,0,0,.16);border-radius:2px;max-width:100%}
 .dshv-page svg{display:block;width:100%;height:auto}
@@ -600,6 +605,9 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           band += '<line x1="' + ax + '" y1="' + (pageHeight - ay) + '" x2="' + bx + '" y2="' + (pageHeight - by) + '"'
             + ' stroke="transparent" stroke-width="14" vector-effect="non-scaling-stroke"'
             + ' data-route-band="' + shape.id + '" data-seg="' + i + '"'
+            // pointer-events must be an attribute, not a CSS property: a style= rule
+            // with a transparent stroke would otherwise make the band invisible to
+            // hit-testing, and the line itself could not be grabbed.
             + ' style="cursor:move" pointer-events="stroke"/>'
         }
         handles += band
@@ -1390,20 +1398,32 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
             return g
           }
 
+          // The viewBox starts at (vb.x, vb.y), not at the origin: the engine pads it
+          // by 0.25in so shapes that spill past the page stay visible.  Mapping the
+          // pointer without that offset shifted every drop by the padding, so an end
+          // dragged onto a shape landed on a neighbour's port instead.
+          const toSheet = (clientX, clientY) => ({
+            x: vb.x + (clientX - box.left) / scale,
+            y: vb.y + vb.height - (clientY - box.top) / scale,
+          })
+          const toViewX = (x) => x - vb.x
+          const toViewY = (y) => vb.y + vb.height - y
+
           const move = (e) => {
-            const wx = (e.clientX - box.left) / scale
-            const wy = vb.height - (e.clientY - box.top) / scale
+            const world = toSheet(e.clientX, e.clientY)
+            const wx = world.x
+            const wy = world.y
             const near = nearestPort(wx, wy)
             const g = ghost('dshv-drop')
             const circle = g.querySelector('circle')
             const line = g.querySelector('line')
             if (near) {
-              circle.setAttribute('cx', near.port[0])
-              circle.setAttribute('cy', vb.height - near.port[1])
-              line.setAttribute('x1', near.port[0])
-              line.setAttribute('y1', vb.height - near.port[1])
-              line.setAttribute('x2', wx)
-              line.setAttribute('y2', vb.height - wy)
+              circle.setAttribute('cx', toViewX(near.port[0]))
+              circle.setAttribute('cy', toViewY(near.port[1]))
+              line.setAttribute('x1', toViewX(near.port[0]))
+              line.setAttribute('y1', toViewY(near.port[1]))
+              line.setAttribute('x2', toViewX(wx))
+              line.setAttribute('y2', toViewY(wy))
               g.style.display = ''
             } else {
               g.style.display = 'none'
@@ -1427,9 +1447,8 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
             if (drop) drop.remove()
             if (tipRef.current) tipRef.current.style.display = 'none'
             if (Math.abs(e.clientX - start.x) + Math.abs(e.clientY - start.y) < 3) return
-            const wx = (e.clientX - box.left) / scale
-            const wy = vb.height - (e.clientY - box.top) / scale
-            const near = nearestPort(wx, wy)
+            const world = toSheet(e.clientX, e.clientY)
+            const near = nearestPort(world.x, world.y)
             if (!near) {
               setError(t('needTarget'))
               return
@@ -1442,7 +1461,8 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           return
         }
         const band = event.target instanceof Element ? event.target.closest('[data-route-band]') : null
-        const handle = band || (event.target instanceof Element ? event.target.closest('[data-route-handle]') : null)
+        const dot = band ? null : (event.target instanceof Element ? event.target.closest('[data-route-handle]') : null)
+        const handle = band || dot
         if (handle) {
           event.preventDefault()
           const current = docRef.current
@@ -1454,9 +1474,13 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           const scale = box.width / vb.width
           const start = { x: event.clientX, y: event.clientY }
           const segIndex = Number(handle.getAttribute('data-seg') || 0)
+          // Both handles name the connector the same way; the grab band used to read
+          // data-route-handle and send shape_id:null, which the engine rejects, so
+          // dragging the line itself silently did nothing.
+          const shapeId = handle.getAttribute('data-route-band') || handle.getAttribute('data-route-handle')
           let axis = handle.getAttribute('data-axis')
           if (!axis) {
-            const item = (docRef.current && docRef.current.shapes || []).find((x) => x.id === handle.getAttribute('data-route-band'))
+            const item = (current.shapes || []).find((x) => x.id === shapeId)
             const pts0 = (item && item.points && item.points.length >= 2) ? item.points : null
             if (pts0 && pts0[segIndex] && pts0[segIndex + 1]) {
               const a = pts0[segIndex]
@@ -1490,7 +1514,7 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
             const delta = vertical ? dx : -dy
             if (Math.abs(delta) < 0.02) return
             runOp({ action: 'move_segment', path: current.path, page: current.page,
-              shape_id: handle.getAttribute('data-route-handle'), index: segIndex, delta })
+              shape_id: shapeId, index: segIndex, delta })
           }
           window.addEventListener('pointermove', move)
           window.addEventListener('pointerup', up)
@@ -1511,7 +1535,8 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         const svg = event.currentTarget.querySelector('svg')
         if (!target || !svg) return
         const box = svg.getBoundingClientRect()
-        const viewWidth = svg.viewBox && svg.viewBox.baseVal ? svg.viewBox.baseVal.width : 0
+        const vbBox = svg.viewBox && svg.viewBox.baseVal ? svg.viewBox.baseVal : null
+        const viewWidth = vbBox ? vbBox.width : 0
         const scale = viewWidth > 0 && box.width > 0 ? box.width / viewWidth : 96
         event.preventDefault()
         const applied = node.getAttribute('transform') || ''
@@ -1555,6 +1580,7 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
       return h('div', { className: 'dshv-root', ref: rootRef },
         h('style', null, CSS),
         h('style', null, CSS_POLISH),
+        h('style', null, CSS_FLOAT),
         h('div', { className: 'dshv-head' },
           h('div', { className: 'dshv-headText' },
             h('div', { className: 'dshv-title' }, doc ? doc.name : t('title')),
@@ -1728,7 +1754,7 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
                       }),
                       ))),
                   h('div', { className: 'dshv-dragtip', ref: tipRef, style: { display: 'none' } }),
-                  h('div', { className: 'dshv-zoom' },
+                  h('div', { className: 'dshv-dock' }, h('div', { className: 'dshv-zoom' },
                     h('button', { type: 'button', className: 'dshv-zbtn', title: t('zoomOut'), onClick: () => setZoom((v) => Math.max(0.15, Math.round((v ?? 1) * 0.8 * 1000) / 1000)) }, '\u2212'),
                     h('button', { type: 'button', className: 'dshv-zbtn dshv-zfit', title: t('zoomFit'), onClick: () => setZoom(null) }, zoom ? `${Math.round(zoom * 100)}%` : t('zoomFit')),
                     h('button', { type: 'button', className: 'dshv-zbtn', title: t('zoomIn'), onClick: () => setZoom((v) => Math.min(8, Math.round((v ?? 1) * 1.25 * 1000) / 1000)) }, '+'),
@@ -1746,7 +1772,7 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
                       className: `dshv-zbtn${showGrid ? ' on' : ''}`,
                       title: t('gridToggle'),
                       onClick: () => setShowGrid((v) => !v),
-                    }, '▦')))),
+                    }, '▦'))))),
 
           h('div', { className: 'dshv-pane dshv-right', style: inspectorOpen ? undefined : { display: 'none' } },
             detail
@@ -2053,8 +2079,13 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
   background:linear-gradient(135deg, transparent 50%, var(--dsw-alias-border-l2) 50%)}
 .dshv-svgHost [data-shape-id]{cursor:move}
 .dshv-hand .dshv-svgHost [data-shape-id],.dshv-hand .dshv-svgHost{cursor:grab}
-.dshv-zoom{position:absolute;right:14px;bottom:14px;display:flex;gap:4px;padding:4px;border-radius:9px;
-  background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l2);box-shadow:0 4px 14px rgba(0,0,0,.16);z-index:5}
+/* The toolbar lives in its own row under the canvas instead of floating over the
+   page: a floating bar sat on the drawing and could swallow clicks meant for a
+   connector handle near the bottom edge. */
+.dshv-dock{flex:0 0 46px;display:flex;align-items:center;justify-content:flex-end;
+  padding:0 14px 8px;background:var(--dsw-alias-bg-layer-2)}
+.dshv-zoom{display:flex;gap:4px;padding:4px;border-radius:9px;
+  background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l2);box-shadow:0 4px 14px rgba(0,0,0,.16)}
 .dshv-zbtn{min-width:28px;height:26px;padding:0 8px;border:0;border-radius:6px;background:transparent;cursor:pointer;
   color:var(--dsw-alias-label-primary);font-size:12px;font-family:inherit}
 .dshv-zbtn:hover{background:var(--dsw-alias-bg-layer-1)}

@@ -1,0 +1,369 @@
+<!doctype html>
+<!--
+  dsh-visio interaction harness.
+
+  Runs the REAL client.js (the panel component) inside a real browser so pointer
+  gestures can be asserted end to end. Two modes:
+
+    fixture mode (default): a fake fetch replays tests/fixtures/*.json, so the
+      layout can be inspected without Python:
+        node tests/make_uicheck.mjs && python -m http.server 8932
+        http://127.0.0.1:8932/tests/interactive.html?fixture=connector-state.json
+
+    live mode: the page talks to the real engine through tests/serve_engine.py:
+        python tests/make_fixture.py
+        python tests/serve_engine.py 8933
+        http://127.0.0.1:8933/_harness.html?live=1&spec=1
+      ?spec=1 runs window.runSpec(): the assertions the panel must satisfy
+      (handles appear, the line and the dots slide a run without moving an end,
+      a dragged end re-glues to the shape under the cursor, and the zoom bar
+      never covers a handle). The result lands in window.__SPEC__ and in the
+      overlay; every entry must be PASS.
+-->
+<html><head><meta charset="utf-8"><title>dsh-visio interactive harness</title>
+<style>html,body{margin:0;height:100%;font:13px system-ui,sans-serif}
+#root{height:100vh;display:flex;flex-direction:column}
+#root>*{flex:1;min-height:0}
+#log{position:fixed;right:8px;bottom:8px;max-width:420px;max-height:40vh;overflow:auto;
+ background:#1119;color:#eee;font:11px/1.45 ui-monospace,monospace;padding:6px;border-radius:6px;z-index:9}
+</style>
+<script src="/tests/vendor/react.production.min.js"></script>
+<script src="/tests/vendor/react-dom.production.min.js"></script>
+<script>
+window.__OPS__ = []
+window.__LOGS__ = []
+window.__docState__ = null
+window.__ModuleLoader__ = { load(module) { window.__VISIO_MODULE__ = module } }
+function logLine(s) { window.__LOGS__.push(s); const el = document.getElementById('log'); if (el) el.textContent = window.__LOGS__.slice(-14).join('\n') }
+
+async function fixture() {
+  const which = new URLSearchParams(location.search).get('fixture') || 'demo-state.json'
+  const res = await fetch('/tests/fixtures/' + which)
+  return await res.json()
+}
+
+const LIVE = new URLSearchParams(location.search).get('live') === '1'
+const LIVE_DOC = new URLSearchParams(location.search).get('doc') || 'tests/fixtures/_live.vsdx'
+
+window.harnessBoot = async function boot() {
+  if (LIVE) {
+    window.__OPS__ = []
+    const realFetch = window.fetch.bind(window)
+    window.fetch = async (url, init) => {
+      if (String(url).includes('/dsh-visio/op') && init && init.body) {
+        try { window.__OPS__.push(JSON.parse(init.body)) } catch (e) { /* ignore */ }
+      }
+      return realFetch(url, init)
+    }
+    try {
+      window.localStorage.setItem('dshv:lastDoc', LIVE_DOC)
+      window.localStorage.setItem('dsh-visio.folder', 'tests/fixtures')
+    } catch (e) { logLine('ls fail ' + e.message) }
+    const mod0 = window.__VISIO_MODULE__
+    const plugin0 = mod0.factory((id) => { if (id === 'react') return window.React; throw new Error('require ' + id) })
+    let captured0 = null
+    const ctx0 = {
+      effect(fn) { const d = fn(); return typeof d === 'function' ? d : () => {} },
+      get() { return undefined },
+      inject() {},
+      logger() { return { warn: logLine } },
+      locale: {
+        register() { return () => {} },
+        bind() { return (key, params) => { const zh = plugin0.zh || {}; let s = zh[key] || key; for (const [k, v] of Object.entries(params || {})) s = s.split('{' + k + '}').join(String(v)); return s } },
+      },
+      slots: {
+        inject(_n, cb) { cb() },
+        register(spec, component) { if (spec.name === 'main') captured0 = component; return () => {} },
+      },
+    }
+    plugin0.apply(ctx0)
+    const root0 = window.ReactDOM.createRoot(document.getElementById('root'))
+    root0.render(window.React.createElement(captured0, { t: ctx0.locale.bind(), pickFolder: async () => null }))
+    await new Promise((res) => setTimeout(res, 1200))
+    logLine('booted (live) ' + LIVE_DOC)
+    return true
+  }
+  const fx = await fixture()
+  const state = JSON.parse(JSON.stringify(fx.state))
+  state.detail = null
+  let selectedId = null
+
+  const reply = (body) => {
+    const action = body.action
+    const withDetail = (id) => {
+      const st = JSON.parse(JSON.stringify(state))
+      st.detail = id && fx.details[id] ? JSON.parse(JSON.stringify(fx.details[id])) : null
+      return st
+    }
+    if (action === 'list') return { ok: true, dir: 'C:/fixture', files: [{ name: 'demo.vsdx', path: state.path, size: 1024 }] }
+    if (action === 'stat') return { ok: true, mtime: state.mtime }
+    if (action === 'render') return withDetail(body.selected)
+    if (action === 'open') return withDetail(body.selected)
+    if (action === 'reglue' || action === 'move_segment') {
+      return { ...withDetail(body.shape_id), notice: action + ' ok' }
+    }
+    return withDetail(body.shape_id)
+  }
+
+  window.fetch = async (url, init) => {
+    const path = String(url)
+    if (path.endsWith('/dsh-visio/config')) {
+      return new Response(JSON.stringify({ ok: true, defaultFolder: 'C:/fixture', folderOk: true, python: 'python', pythonOk: true, engine: 'visio_bridge/1.0.0' }), { status: 200, headers: { 'content-type': 'application/json' } })
+    }
+    if (path.endsWith('/dsh-visio/op')) {
+      const body = JSON.parse(init.body)
+      window.__OPS__.push(body)
+      logLine('op ' + body.action + (body.end ? ' end=' + body.end : '') + (body.to ? ' to=' + body.to : '') + (body.delta !== undefined ? ' delta=' + body.delta : '') + (body.index !== undefined ? ' index=' + body.index : ''))
+      const payload = reply(body)
+      if (body.action === 'render' && body.selected) {
+        window.__docState__ = payload
+      }
+      return new Response(JSON.stringify(payload), { status: 200, headers: { 'content-type': 'application/json' } })
+    }
+    throw new Error('unexpected fetch ' + path)
+  }
+
+  const mod = window.__VISIO_MODULE__
+  let captured = null
+  const ctx = {
+    effect(fn) { const d = fn(); return typeof d === 'function' ? d : () => {} },
+    get() { return undefined },
+    inject() {},
+    logger() { return { warn: logLine } },
+    locale: {
+      register() { return () => {} },
+      bind() { return (key, params) => { const zh = plugin.zh || {}; let s = zh[key] || key; for (const [k, v] of Object.entries(params || {})) s = s.split('{' + k + '}').join(String(v)); return s } },
+    },
+    slots: {
+      inject(_n, cb) { cb() },
+      register(spec, component) { if (spec.name === 'main') captured = component; return () => {} },
+    },
+  }
+  try { window.localStorage.setItem('dshv:lastDoc', state.path); window.localStorage.setItem('dsh-visio.folder', 'C:/fixture') } catch (e) { logLine('ls fail ' + e.message) }
+  const plugin = mod.factory((id) => { if (id === 'react') return window.React; throw new Error('require ' + id) })
+  plugin.apply(ctx)
+  const React = window.React
+  const ReactDOM = window.ReactDOM
+  const root = ReactDOM.createRoot(document.getElementById('root'))
+  root.render(React.createElement(captured, { t: ctx.locale.bind(), pickFolder: async () => null }))
+  await new Promise((r) => setTimeout(r, 400))
+  logLine('booted')
+  return true
+}
+
+window.runSpec = async function runSpec() {
+  const results = []
+  const check = (name, ok, detail) => { results.push({ name, ok: !!ok, detail: String(detail) }); return ok }
+  const pathOf = () => {
+    const el = document.querySelector('[data-shape-id="5"] path')
+    return el ? el.getAttribute('d') : ''
+  }
+  const endpoints = (d) => {
+    const nums = (d.match(/-?\d+\.?\d*/g) || []).map(Number)
+    if (!nums.length) return null
+    return { first: [nums[0], nums[1]], last: [nums[nums.length - 2], nums[nums.length - 1]] }
+  }
+  const waitOp = async (action, ms = 2500) => {
+    const start = Date.now()
+    while (Date.now() - start < ms) {
+      if (window.__OPS__.some((o) => o.action === action)) return true
+      await new Promise((r) => setTimeout(r, 100))
+    }
+    return false
+  }
+  const lastOp = (action) => window.__OPS__.filter((o) => o.action === action).slice(-1)[0]
+
+  try {
+    // ---- 1. selecting a connector shows handles ---------------------------
+    await window.harness.clickShape('5')
+    await new Promise((r) => setTimeout(r, 600))
+    const counts = window.harness.counts()
+    check('handles: two ends, one band, one dot', counts.ends === 2 && counts.bands >= 1 && counts.dots >= 1,
+      JSON.stringify(counts))
+
+    // ---- 2. dragging the line itself slides that run ----------------------
+    const before = pathOf()
+    const band = document.querySelector('[data-route-band]').getBoundingClientRect()
+    // the blue dot sits at the middle of the run, so sample the band a quarter in
+    const point = { x: band.left + band.width * 0.25, y: band.top }
+    const hit = window.harness.hitAt(point.x, point.y)
+    check('band is hit-testable (pointer-events=stroke)', hit.hit['[data-route-band]'], hit.tag)
+    window.harness.clearOps()
+    const probe = window.harness.dragProbe(point.x, point.y, point.x, point.y - 40, 6)
+    check('band drag shows a live offset tooltip', probe.tips[probe.tips.length - 1] && probe.tips[probe.tips.length - 1].display === 'block',
+      JSON.stringify(probe.tips[0]))
+    const moved = await waitOp('move_segment')
+    check('band drag commits move_segment', moved, JSON.stringify(window.__OPS__.slice(-1)))
+    const op = lastOp('move_segment')
+    check('band drag names the connector (not null)', op && op.shape_id === '5', op && String(op.shape_id))
+    await new Promise((r) => setTimeout(r, 400))
+    const afterBand = pathOf()
+    const e0 = endpoints(before)
+    const e1 = endpoints(afterBand)
+    const same = e0 && e1 && Math.abs(e0.first[0] - e1.first[0]) < 0.02 && Math.abs(e0.first[1] - e1.first[1]) < 0.02
+      && Math.abs(e0.last[0] - e1.last[0]) < 0.02 && Math.abs(e0.last[1] - e1.last[1]) < 0.02
+    check('band drag leaves both ends where they were', same, before + ' -> ' + afterBand)
+
+    // ---- 3. the blue dot does the same -----------------------------------
+    await window.harness.clickShape('5')
+    await new Promise((r) => setTimeout(r, 600))
+    const dot = document.querySelector('[data-route-handle]').getBoundingClientRect()
+    const dp = { x: dot.left + dot.width / 2, y: dot.top + dot.height / 2 }
+    const beforeDot = pathOf()
+    window.harness.clearOps()
+    window.harness.dragProbe(dp.x, dp.y, dp.x, dp.y - 30, 5)
+    const dotMoved = await waitOp('move_segment')
+    check('dot drag commits move_segment', dotMoved, JSON.stringify(window.__OPS__.slice(-1)))
+    const dotOp = lastOp('move_segment')
+    check('dot drag names the connector', dotOp && dotOp.shape_id === '5', dotOp && String(dotOp.shape_id))
+    await new Promise((r) => setTimeout(r, 400))
+    const e2 = endpoints(pathOf())
+    const e3 = endpoints(beforeDot)
+    const same2 = e2 && e3 && Math.abs(e2.first[0] - e3.first[0]) < 0.02 && Math.abs(e2.first[1] - e3.first[1]) < 0.02
+      && Math.abs(e2.last[0] - e3.last[0]) < 0.02 && Math.abs(e2.last[1] - e3.last[1]) < 0.02
+    check('dot drag leaves both ends where they were', same2, beforeDot + ' -> ' + pathOf())
+
+    // ---- 4. dragging a red end re-glues it to the shape under the cursor --
+    await window.harness.clickShape('5')
+    await new Promise((r) => setTimeout(r, 600))
+    const endBox = window.harness.centreOf('[data-route-end]', 1)
+    const targetShape = document.querySelector('[data-shape-id="4"]').getBoundingClientRect()
+    const target = { x: targetShape.left + targetShape.width / 2, y: targetShape.top + 2 }
+    window.harness.clearOps()
+    const endProbe = window.harness.dragProbe(endBox.x, endBox.y, target.x, target.y, 8)
+    const named = endProbe.tips[endProbe.tips.length - 1] && endProbe.tips[endProbe.tips.length - 1].text
+    check('end drag preview names the target shape', /#4/.test(named || ''), named)
+    const glued = await waitOp('reglue')
+    check('end drag commits reglue', glued, JSON.stringify(window.__OPS__.slice(-1)))
+    const glueOp = lastOp('reglue')
+    check('reglue targets the shape under the cursor', glueOp && glueOp.to === '4', glueOp && String(glueOp.to))
+    await new Promise((r) => setTimeout(r, 600))
+    const after = window.harness.centreOf('[data-route-end]', 1)
+    const shape4 = document.querySelector('[data-shape-id="4"]').getBoundingClientRect()
+    const near = after && Math.abs(after.x - (shape4.left + shape4.width / 2)) < 6 && Math.abs(after.y - shape4.top) < 12
+    check('the re-glued end sits on the target edge', near,
+      JSON.stringify({ end: after, shape: { left: shape4.left, top: shape4.top, w: shape4.width } }))
+
+    // ---- 5. the zoom toolbar must stay a thin bar and keep off the handles --
+    // A handle only matters where it can actually be hit: the scroller clips
+    // anything past its edge, so intersect with the visible canvas rect first.
+    const zoomBox = document.querySelector('.dshv-zoom').getBoundingClientRect()
+    const wrapBox = document.querySelector('.dshv-canvasWrap').getBoundingClientRect()
+    const handles = Array.from(document.querySelectorAll('[data-route-end], [data-route-handle]'))
+    const visible = (b) => ({
+      left: Math.max(b.left, wrapBox.left), right: Math.min(b.right, wrapBox.right),
+      top: Math.max(b.top, wrapBox.top), bottom: Math.min(b.bottom, wrapBox.bottom),
+    })
+    const covered = handles.filter((el) => {
+      const b = visible(el.getBoundingClientRect())
+      return b.right > b.left && b.bottom > b.top
+        && Math.min(zoomBox.right, b.right) - Math.max(zoomBox.left, b.left) > 0
+        && Math.min(zoomBox.bottom, b.bottom) - Math.max(zoomBox.top, b.top) > 0
+    })
+    check('zoom toolbar does not cover a visible end or segment handle', covered.length === 0,
+      covered.length + ' covered; zoom=' + JSON.stringify(zoomBox.toJSON()) + ' wrap=' + JSON.stringify(wrapBox.toJSON()))
+    check('zoom toolbar is a thin bar, not a full-height column', zoomBox.height < 80, zoomBox.height)
+  } catch (error) {
+    results.push({ name: 'spec crashed', ok: false, detail: error.message + '\n' + (error.stack || '') })
+  }
+  window.__SPEC__ = results
+  const box = document.getElementById('log')
+  if (box) {
+    box.textContent = results.map((r) => (r.ok ? 'PASS ' : 'FAIL ') + r.name + (r.ok ? '' : ' :: ' + r.detail)).join('\n')
+    box.style.maxHeight = '70vh'
+  }
+  return results
+}
+
+window.harness = {
+  logs: () => window.__LOGS__,
+  ops: () => window.__OPS__,
+  clearOps: () => { window.__OPS__.length = 0 },
+  doc: () => window.__docState__,
+  svgHost: () => document.querySelector('.dshv-svgHost'),
+  svg: () => document.querySelector('.dshv-svgHost svg'),
+  counts: () => ({
+    ends: document.querySelectorAll('[data-route-end]').length,
+    bands: document.querySelectorAll('[data-route-band]').length,
+    dots: document.querySelectorAll('[data-route-handle]').length,
+    shapes: document.querySelectorAll('[data-shape-id]').length,
+  }),
+  /** what elementFromPoint finds at a viewport point */
+  hitAt: (x, y) => {
+    const el = document.elementFromPoint(x, y)
+    if (!el) return { el: null }
+    const tags = ['[data-route-end]', '[data-route-band]', '[data-route-handle]', '[data-guide]', '[data-shape-id]']
+    const hit = {}
+    for (const sel of tags) hit[sel] = !!el.closest(sel)
+    return { tag: el.tagName, attrs: Array.from(el.attributes).map((a) => a.name + '=' + a.value).join(' '), hit }
+  },
+  /** centre of the first matching element, in viewport coordinates */
+  centreOf: (selector, index = 0) => {
+    const el = document.querySelectorAll(selector)[index]
+    if (!el) return null
+    const r = el.getBoundingClientRect()
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height, left: r.left, top: r.top }
+  },
+  /** where the code believes a point is: svg box + viewBox scale */
+  probe: () => {
+    const svg = window.harness.svg()
+    const box = svg.getBoundingClientRect()
+    const vb = svg.viewBox.baseVal
+    return { box: { left: box.left, top: box.top, w: box.width, h: box.height },
+      vb: { x: vb.x, y: vb.y, w: vb.width, h: vb.height }, scale: box.width / vb.width }
+  },
+  drag: async (x1, y1, x2, y2, steps = 8) => {
+    const target = document.elementFromPoint(x1, y1)
+    if (!target) return 'no target'
+    target.dispatchEvent(new PointerEvent('pointerdown', { clientX: x1, clientY: y1, button: 0, buttons: 1, bubbles: true, cancelable: true, pointerId: 1, pointerType: 'mouse' }))
+    for (let i = 1; i <= steps; i += 1) {
+      const x = x1 + (x2 - x1) * i / steps
+      const y = y1 + (y2 - y1) * i / steps
+      window.dispatchEvent(new PointerEvent('pointermove', { clientX: x, clientY: y, buttons: 1, bubbles: true, pointerId: 1, pointerType: 'mouse' }))
+      await new Promise((r) => setTimeout(r, 0))
+    }
+    window.dispatchEvent(new PointerEvent('pointerup', { clientX: x2, clientY: y2, button: 0, buttons: 0, bubbles: true, pointerId: 1, pointerType: 'mouse' }))
+    await new Promise((r) => setTimeout(r, 250))
+    return 'ok'
+  },
+  /** Drag and report the tooltip seen at the middle of the gesture (no awaits in between). */
+  dragProbe: (x1, y1, x2, y2, steps = 6) => {
+    const target = document.elementFromPoint(x1, y1)
+    if (!target) return { error: 'no target' }
+    const tips = []
+    const tip = () => document.querySelector('.dshv-dragtip')
+    target.dispatchEvent(new PointerEvent('pointerdown', { clientX: x1, clientY: y1, button: 0, buttons: 1, bubbles: true, cancelable: true, pointerId: 1, pointerType: 'mouse' }))
+    for (let i = 1; i <= steps; i += 1) {
+      const x = x1 + (x2 - x1) * i / steps
+      const y = y1 + (y2 - y1) * i / steps
+      window.dispatchEvent(new PointerEvent('pointermove', { clientX: x, clientY: y, buttons: 1, bubbles: true, pointerId: 1, pointerType: 'mouse' }))
+      const el = tip()
+      tips.push(el ? { text: el.textContent, display: el.style.display } : null)
+    }
+    window.dispatchEvent(new PointerEvent('pointerup', { clientX: x2, clientY: y2, button: 0, buttons: 0, bubbles: true, pointerId: 1, pointerType: 'mouse' }))
+    return { tips, ops: window.__OPS__.slice(-4).map((o) => o.action + ':' + JSON.stringify(o)) }
+  },
+  clickShape: async (id) => {
+    const el = document.querySelector('[data-shape-id="' + id + '"]')
+    if (!el) return 'no shape'
+    const r = el.getBoundingClientRect()
+    const x = r.left + r.width / 2
+    const y = r.top + r.height / 2
+    el.dispatchEvent(new PointerEvent('pointerdown', { clientX: x, clientY: y, button: 0, buttons: 1, bubbles: true, cancelable: true, pointerId: 1, pointerType: 'mouse' }))
+    window.dispatchEvent(new PointerEvent('pointerup', { clientX: x, clientY: y, button: 0, bubbles: true, pointerId: 1, pointerType: 'mouse' }))
+    el.dispatchEvent(new MouseEvent('click', { clientX: x, clientY: y, bubbles: true, cancelable: true }))
+    await new Promise((r) => setTimeout(r, 400))
+    return { x, y }
+  },
+  tooltip: () => { const el = document.querySelector('.dshv-dragtip'); return el ? { text: el.textContent, display: el.style.display } : null },
+}
+</script>
+</head>
+<body>
+<div id="root"></div>
+<div id="log">boot…</div>
+<script src="/client.js"></script>
+<script>window.harnessBoot().then(() => {
+  if (new URLSearchParams(location.search).get('spec') === '1') return window.runSpec()
+}).catch((e) => logLine('BOOT FAIL ' + e.message + ' ' + e.stack))</script>
+</body></html>

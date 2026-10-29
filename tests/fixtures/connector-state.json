@@ -1,0 +1,355 @@
+{
+ "state": {
+  "ok": true,
+  "path": "C:\\Users\\SOC\\Documents\\visio-plugin\\tests\\fixtures\\connector.vsdx",
+  "name": "connector.vsdx",
+  "folder": "C:\\Users\\SOC\\Documents\\visio-plugin\\tests\\fixtures",
+  "page": 1,
+  "pageCount": 1,
+  "pageName": "Page-1",
+  "pageSize": {
+   "w": 11.0,
+   "h": 8.5
+  },
+  "pages": [
+   {
+    "index": 1,
+    "name": "Page-1",
+    "width": 11.0,
+    "height": 8.5
+   }
+  ],
+  "masters": [],
+  "shapes": [
+   {
+    "id": "1",
+    "name": "Sheet.1",
+    "type": "Shape",
+    "parent": null,
+    "depth": 0,
+    "master": "",
+    "text": "Connector",
+    "bbox": {
+     "x": 0.5,
+     "y": 7.35,
+     "w": 10.0,
+     "h": 0.75
+    },
+    "geometry": [],
+    "connector": false,
+    "points": [],
+    "connects": [],
+    "props": {}
+   },
+   {
+    "id": "2",
+    "name": "Sheet.2",
+    "type": "Shape",
+    "parent": null,
+    "depth": 0,
+    "master": "",
+    "text": "A",
+    "bbox": {
+     "x": 1.2,
+     "y": 6.4,
+     "w": 2.4,
+     "h": 1.0
+    },
+    "geometry": [
+     "RelMoveTo",
+     "RelLineTo",
+     "RelLineTo",
+     "RelLineTo",
+     "RelLineTo"
+    ],
+    "connector": false,
+    "points": [],
+    "connects": [],
+    "props": {}
+   },
+   {
+    "id": "3",
+    "name": "Sheet.3",
+    "type": "Shape",
+    "parent": null,
+    "depth": 0,
+    "master": "",
+    "text": "B",
+    "bbox": {
+     "x": 7.4,
+     "y": 6.4,
+     "w": 2.4,
+     "h": 1.0
+    },
+    "geometry": [
+     "RelMoveTo",
+     "RelLineTo",
+     "RelLineTo",
+     "RelLineTo",
+     "RelLineTo"
+    ],
+    "connector": false,
+    "points": [],
+    "connects": [],
+    "props": {}
+   },
+   {
+    "id": "4",
+    "name": "Sheet.4",
+    "type": "Shape",
+    "parent": null,
+    "depth": 0,
+    "master": "",
+    "text": "C",
+    "bbox": {
+     "x": 4.3,
+     "y": 1.2,
+     "w": 2.4,
+     "h": 1.0
+    },
+    "geometry": [
+     "RelMoveTo",
+     "RelLineTo",
+     "RelLineTo",
+     "RelLineTo",
+     "RelLineTo"
+    ],
+    "connector": false,
+    "points": [],
+    "connects": [],
+    "props": {}
+   },
+   {
+    "id": "5",
+    "name": "Dynamic connector.5",
+    "type": "Shape",
+    "parent": null,
+    "depth": 0,
+    "master": "",
+    "text": "ab",
+    "bbox": {
+     "x": 3.6,
+     "y": 6.9,
+     "w": 3.8,
+     "h": 0.0
+    },
+    "geometry": [],
+    "connector": true,
+    "points": [
+     [
+      3.5999999999999996,
+      6.9
+     ],
+     [
+      7.4,
+      6.9
+     ]
+    ],
+    "connects": [
+     {
+      "to": "2",
+      "cell": "BeginX"
+     },
+     {
+      "to": "3",
+      "cell": "EndX"
+     }
+    ],
+    "props": {}
+   }
+  ],
+  "detail": null,
+  "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1104\" height=\"864\" overflow=\"visible\" viewBox=\"-0.2500 -0.2500 11.5000 9.0000\" font-family=\"Segoe UI, Arial, sans-serif\">\n<rect x=\"0\" y=\"0\" width=\"11.000\" height=\"8.500\" fill=\"none\" stroke=\"#9AA3AF\" stroke-width=\"0.012\" stroke-dasharray=\"0.08 0.06\" vector-effect=\"non-scaling-stroke\"/>\n<defs>\n<marker id=\"dshv-arrow-404040\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"5\" markerHeight=\"5\" orient=\"auto-start-reverse\"><path d=\"M 0 0 L 10 5 L 0 10 z\" fill=\"#404040\"/></marker>\n</defs>\n<g data-shape-id=\"5\">\n<path d=\"M 3.6000 1.6000 L 3.8200 1.6000 L 5.5000 1.6000 L 7.1800 1.6000 L 7.4000 1.6000\" fill=\"none\" stroke=\"#404040\" stroke-width=\"0.0104\" marker-end=\"url(#dshv-arrow-404040)\"/>\n<path d=\"M 3.6000 1.6000 L 3.8200 1.6000 L 5.5000 1.6000 L 7.1800 1.6000 L 7.4000 1.6000\" fill=\"none\" stroke=\"transparent\" stroke-width=\"12\" vector-effect=\"non-scaling-stroke\" pointer-events=\"stroke\"/>\n<text x=\"5.500\" y=\"1.600\" font-size=\"0.08\" fill=\"#1A1A1A\" text-anchor=\"middle\">ab</text>\n</g>\n<g data-shape-id=\"1\">\n<rect x=\"0.500\" y=\"0.400\" width=\"10.000\" height=\"0.750\" fill=\"transparent\" stroke=\"none\"/>\n<text x=\"5.5000\" y=\"0.7750\" font-size=\"0.2200\" fill=\"#1A1A1A\" text-anchor=\"middle\" dominant-baseline=\"middle\">Connector</text>\n</g>\n<g data-shape-id=\"2\">\n<path d=\"M 1.2000 2.1000 L 3.6000 2.1000 L 3.6000 1.1000 L 1.2000 1.1000 L 1.2000 2.1000 Z\" fill=\"#FFFFFF\" stroke=\"#404040\" stroke-width=\"0.0104\" stroke-linejoin=\"round\"/>\n<text x=\"2.4000\" y=\"1.6000\" font-size=\"0.2200\" fill=\"#1A1A1A\" text-anchor=\"middle\" dominant-baseline=\"middle\">A</text>\n</g>\n<g data-shape-id=\"3\">\n<path d=\"M 7.4000 2.1000 L 9.8000 2.1000 L 9.8000 1.1000 L 7.4000 1.1000 L 7.4000 2.1000 Z\" fill=\"#FFFFFF\" stroke=\"#404040\" stroke-width=\"0.0104\" stroke-linejoin=\"round\"/>\n<text x=\"8.6000\" y=\"1.6000\" font-size=\"0.2200\" fill=\"#1A1A1A\" text-anchor=\"middle\" dominant-baseline=\"middle\">B</text>\n</g>\n<g data-shape-id=\"4\">\n<path d=\"M 4.3000 7.3000 L 6.7000 7.3000 L 6.7000 6.3000 L 4.3000 6.3000 L 4.3000 7.3000 Z\" fill=\"#FFFFFF\" stroke=\"#404040\" stroke-width=\"0.0104\" stroke-linejoin=\"round\"/>\n<text x=\"5.5000\" y=\"6.8000\" font-size=\"0.2200\" fill=\"#1A1A1A\" text-anchor=\"middle\" dominant-baseline=\"middle\">C</text>\n</g>\n</svg>",
+  "saved": false,
+  "notice": "",
+  "mtime": 1793268510.331621,
+  "engine": "1.0.0",
+  "canUndo": 4,
+  "canRedo": 0
+ },
+ "details": {
+  "1": {
+   "id": "1",
+   "type": "Shape",
+   "master": "",
+   "text": "Connector",
+   "parent": null,
+   "cells": {
+    "PinX": "5.5",
+    "PinY": "7.725",
+    "Width": "10.0",
+    "Height": "0.75",
+    "LocPinX": "5.0",
+    "LocPinY": "0.375",
+    "Angle": "0",
+    "FlipX": "0",
+    "FlipY": "0",
+    "LineWeight": "0.01041666666666667",
+    "LineColor": "#404040",
+    "FillForegnd": "#FFFFFF",
+    "FillBkgnd": "#FFFFFF",
+    "FillPattern": "0",
+    "LinePattern": "0",
+    "Rounding": "0",
+    "ShdwPattern": "0"
+   },
+   "props": {},
+   "style": {
+    "fill": null,
+    "line": null,
+    "text": null,
+    "font_pt": null,
+    "weight": 0.01041666666666667,
+    "end_arrow": "0"
+   },
+   "sections": []
+  },
+  "2": {
+   "id": "2",
+   "type": "Shape",
+   "master": "",
+   "text": "A",
+   "parent": null,
+   "cells": {
+    "PinX": "2.4",
+    "PinY": "6.9",
+    "Width": "2.4",
+    "Height": "1.0",
+    "LocPinX": "1.2",
+    "LocPinY": "0.5",
+    "Angle": "0",
+    "FlipX": "0",
+    "FlipY": "0",
+    "LineWeight": "0.01041666666666667",
+    "LineColor": "#404040",
+    "FillForegnd": "#FFFFFF",
+    "FillBkgnd": "#FFFFFF",
+    "FillPattern": "1",
+    "LinePattern": "1",
+    "Rounding": "0",
+    "ShdwPattern": "0"
+   },
+   "props": {},
+   "style": {
+    "fill": "#FFFFFF",
+    "line": "#404040",
+    "text": null,
+    "font_pt": null,
+    "weight": 0.01041666666666667,
+    "end_arrow": "0"
+   },
+   "sections": [
+    "Geometry"
+   ]
+  },
+  "3": {
+   "id": "3",
+   "type": "Shape",
+   "master": "",
+   "text": "B",
+   "parent": null,
+   "cells": {
+    "PinX": "8.6",
+    "PinY": "6.9",
+    "Width": "2.4",
+    "Height": "1.0",
+    "LocPinX": "1.2",
+    "LocPinY": "0.5",
+    "Angle": "0",
+    "FlipX": "0",
+    "FlipY": "0",
+    "LineWeight": "0.01041666666666667",
+    "LineColor": "#404040",
+    "FillForegnd": "#FFFFFF",
+    "FillBkgnd": "#FFFFFF",
+    "FillPattern": "1",
+    "LinePattern": "1",
+    "Rounding": "0",
+    "ShdwPattern": "0"
+   },
+   "props": {},
+   "style": {
+    "fill": "#FFFFFF",
+    "line": "#404040",
+    "text": null,
+    "font_pt": null,
+    "weight": 0.01041666666666667,
+    "end_arrow": "0"
+   },
+   "sections": [
+    "Geometry"
+   ]
+  },
+  "4": {
+   "id": "4",
+   "type": "Shape",
+   "master": "",
+   "text": "C",
+   "parent": null,
+   "cells": {
+    "PinX": "5.5",
+    "PinY": "1.7",
+    "Width": "2.4",
+    "Height": "1.0",
+    "LocPinX": "1.2",
+    "LocPinY": "0.5",
+    "Angle": "0",
+    "FlipX": "0",
+    "FlipY": "0",
+    "LineWeight": "0.01041666666666667",
+    "LineColor": "#404040",
+    "FillForegnd": "#FFFFFF",
+    "FillBkgnd": "#FFFFFF",
+    "FillPattern": "1",
+    "LinePattern": "1",
+    "Rounding": "0",
+    "ShdwPattern": "0"
+   },
+   "props": {},
+   "style": {
+    "fill": "#FFFFFF",
+    "line": "#404040",
+    "text": null,
+    "font_pt": null,
+    "weight": 0.01041666666666667,
+    "end_arrow": "0"
+   },
+   "sections": [
+    "Geometry"
+   ]
+  },
+  "5": {
+   "id": "5",
+   "type": "Shape",
+   "master": "",
+   "text": "ab",
+   "parent": null,
+   "cells": {
+    "PinX": "5.5",
+    "PinY": "6.9",
+    "Width": "3.8",
+    "Height": "0.0",
+    "LocPinX": "1.9",
+    "LocPinY": "0.0",
+    "BeginX": "3.5999999999999996",
+    "BeginY": "6.9",
+    "EndX": "7.3999999999999995",
+    "EndY": "6.9",
+    "LineWeight": "0.01041666666666667",
+    "LineColor": "#404040",
+    "EndArrow": "4",
+    "BeginArrow": "0"
+   },
+   "props": {},
+   "style": {
+    "fill": "#FFFFFF",
+    "line": "#404040",
+    "text": null,
+    "font_pt": null,
+    "weight": 0.01041666666666667,
+    "end_arrow": "4"
+   },
+   "sections": []
+  }
+ }
+}

@@ -19,6 +19,26 @@
 - Dragging a connector end now shows a **drop preview**: a green dot marks the port it will
   glue to, a dashed line joins it to the cursor, and the tooltip names the target shape.
   Releasing with no target reports it instead of silently doing nothing.
+- **Fixed dragging the line itself doing nothing**: the grab band sent `shape_id: null`
+  (it read `data-route-handle` off an element that has `data-route-band`), so the engine
+  rejected every request. Both handles now resolve the connector the same way.
+- **Fixed an end dropped onto one shape landing on its neighbour**: the pointer was mapped
+  through the viewBox as if it started at the origin, but the engine pads the view box by
+  0.25in. The offset is now applied, so a release lands on the port under the cursor.
+- **Fixed a re-glued end leaving the line behind**: `reglue` rewrote the glue rows and the
+  Begin/End cells but not the hand-drawn polyline, so the picture kept the old corner. The
+  route's end point now moves too, and keeps the run axis aligned.
+- **Fixed the segment drag pulling the ends**: `move_segment` shifted the neighbouring
+  corners as well, so a run that touched an end dragged that end with it, and a two-point
+  line came back as a non-orthogonal three-point stub. Ends are now fixed, only the run
+  under the cursor travels, and a straight line grows a proper jog first.
+- A hand-drawn route of exactly two points now stays manual (`drawn_points` used to need
+  more than two points, so straightening a connector handed it back to the router).
+- The zoom toolbar moved out of the drawing into a dock row under it: floating over the
+  page it could cover a connector handle near the bottom edge and swallow the click.
+- New regression tests: 11 engine tests for `reglue` / `move_segment` / `_simplify` /
+  `drawn_points`, plus `tests/interactive.html` — a real-browser harness that drives the
+  actual panel against the actual engine and asserts the connector gestures.
 
 
 ## 1.20.0

@@ -341,5 +341,448 @@ class GeometryTests(unittest.TestCase):
         self.assertAlmostEqual(float(weights[0].get("V")), 0.75 / 72.0, places=6)
 
 
+# --------------------------------------------------- connector editing regressions
+TOL = 1e-4
+
+
+def _saved_page(path, page=1):
+    """The page part exactly as it sits inside the saved package."""
+    part = Vsdx(path).page_part(page)
+    with zipfile.ZipFile(path) as z:
+        return ET.fromstring(z.read(part))
+
+
+def _saved_shape(root, shape_id):
+    for sh in root.iter(_v("Shape")):
+        if sh.get("ID") == str(shape_id):
+            return sh
+    raise AssertionError("shape %s missing from the saved page" % shape_id)
+
+
+def _saved_cells(root, shape_id):
+    return {c.get("N"): c.get("V") for c in _saved_shape(root, shape_id).findall(_v("Cell"))}
+
+
+def _saved_point(root, shape_id, x_name, y_name):
+    cells = _saved_cells(root, shape_id)
+    return (float(cells[x_name]), float(cells[y_name]))
+
+
+def _connect_rows(root, from_sheet=None, from_cell=None):
+    """Page-level <Connects> rows, the way Visio stores glue."""
+    conns = root.find(_v("Connects"))
+    if conns is None:
+        return []
+    rows = []
+    for c in conns.findall(_v("Connect")):
+        if from_sheet is not None and c.get("FromSheet") != str(from_sheet):
+            continue
+        if from_cell is not None and c.get("FromCell") != from_cell:
+            continue
+        rows.append({
+            "FromSheet": c.get("FromSheet"), "FromCell": c.get("FromCell"),
+            "ToSheet": c.get("ToSheet"), "ToCell": c.get("ToCell"),
+        })
+    return rows
+
+
+def _add_connection_point(doc, shape_id, x, y, page=1):
+    """Give a shape an explicit Section N="Connection" row (X/Y are shape-local)."""
+    part, root = doc._page_root(page)
+    for sh, _p, _d in doc._iter_shapes(root.find(_v("Shapes"))):
+        if sh.get("ID") != str(shape_id):
+            continue
+        sec = ET.SubElement(sh, _v("Section"))
+        sec.set("N", "Connection")
+        sec.set("IX", "0")
+        row = ET.SubElement(sec, _v("Row"))
+        row.set("IX", "0")
+        for name, value in (("X", x), ("Y", y), ("DirX", 0), ("DirY", 0)):
+            cell = ET.SubElement(row, _v("Cell"))
+            cell.set("N", name)
+            cell.set("V", str(value))
+        break
+    else:
+        raise AssertionError("shape %s not found" % shape_id)
+    doc._write_page(part, root)
+
+
+def _axis_aligned(points):
+    return all(abs(a[0] - b[0]) <= TOL or abs(a[1] - b[1]) <= TOL
+               for a, b in zip(points, points[1:]))
+
+
+def _pts(points):
+    return [(round(float(x), 4), round(float(y), 4)) for x, y in points]
+
+
+def _has_point(points, pt):
+    return any(abs(p[0] - pt[0]) <= TOL and abs(p[1] - pt[1]) <= TOL for p in points)
+
+
+def _runs(points):
+    return list(zip(points, points[1:]))
+
+
+def _moved_runs(points, before, delta, axis):
+    """Runs of the dragged line that now sit exactly delta away along their normal.
+
+    axis="y" is a horizontal run slid vertically; axis="x" is a vertical run slid
+    sideways.  The run must still be parallel to the original one and both of its
+    end points must be the originals translated by delta.
+    """
+    out = []
+    for a, b in _runs(points):
+        if axis == "y":
+            if (abs(a[1] - b[1]) <= TOL                    # still horizontal
+                    and abs(a[1] - (before[0][1] + delta)) <= TOL
+                    and abs(b[1] - (before[1][1] + delta)) <= TOL
+                    and abs(a[0] - before[0][0]) <= TOL
+                    and abs(b[0] - before[1][0]) <= TOL):
+                out.append((a, b))
+        else:
+            if (abs(a[0] - b[0]) <= TOL                    # still vertical
+                    and abs(a[0] - (before[0][0] + delta)) <= TOL
+                    and abs(b[0] - (before[1][0] + delta)) <= TOL
+                    and abs(a[1] - before[0][1]) <= TOL
+                    and abs(b[1] - before[1][1]) <= TOL):
+                out.append((a, b))
+    return out
+
+
+class ConnectorEditTests(unittest.TestCase):
+    """Engine-side regressions for connector editing, checked against the saved file.
+
+    Every case edits a throw-away copy under tests/_out, saves it, and reads the
+    package back: asserting on the in-memory object would let a silent no-op pass,
+    and what matters is what Visio finds in the file.  Coordinates come back
+    rounded to 6 decimals by set_route, so comparisons use a 1e-4 tolerance.
+    """
+
+    def setUp(self):
+        shutil.rmtree(OUT, ignore_errors=True)
+        os.makedirs(OUT, exist_ok=True)
+
+    # ---------------------------------------------------------- builders
+    def _new(self, name):
+        path = os.path.join(OUT, name)
+        blank_doc.create(path, 11, 8.5, "Page-1", "t")
+        return path
+
+    def _two_boxes(self, path, by=5.0):
+        """Two 2x1 boxes plus the connector that joins them."""
+        doc = Vsdx(path)
+        a = doc.add_shape(1, 1.0, 5.0, 2.0, 1.0, "A", "rect")
+        b = doc.add_shape(1, 5.0, by, 2.0, 1.0, "B", "rect")
+        link = doc.connect(a, b, 1, label="go")
+        doc.save(backup=False)
+        return a, b, link
+
+    def _box(self, path, x, y, w=1.5, h=1.0):
+        doc = Vsdx(path)
+        sid = doc.add_shape(1, x, y, w, h, "C", "rect")
+        doc.save(backup=False)
+        return sid
+
+    def _ports(self, path, shape_id):
+        bbox = next(s for s in Vsdx(path).shapes(1) if s["id"] == str(shape_id))["bbox"]
+        return [(bbox["x"], bbox["y"] + bbox["h"] / 2.0),
+                (bbox["x"] + bbox["w"], bbox["y"] + bbox["h"] / 2.0),
+                (bbox["x"] + bbox["w"] / 2.0, bbox["y"]),
+                (bbox["x"] + bbox["w"] / 2.0, bbox["y"] + bbox["h"])]
+
+    def _route(self, path, link, points):
+        doc = Vsdx(path)
+        doc.set_route(link, points, page=1)
+        doc.save(backup=False)
+
+    # ------------------------------------------------------- reglue / glue
+    def test_reglue_end_snaps_to_nearest_edge_midpoint(self):
+        path = self._new("reglue-end.vsdx")
+        a, b, link = self._two_boxes(path)
+        c = self._box(path, 8.0, 3.0)
+        root = _saved_page(path)
+        begin = _saved_point(root, link, "BeginX", "BeginY")
+        old_end = _saved_point(root, link, "EndX", "EndY")
+        self.assertEqual(_pts([begin])[0], (3.0, 5.5))
+        self.assertEqual(_pts([old_end])[0], (5.0, 5.5))
+
+        doc = Vsdx(path)
+        doc.reglue(link, "end", c, x=8.6, y=4.2, page=1)
+        doc.save(backup=False)
+
+        root = _saved_page(path)
+        end = _saved_point(root, link, "EndX", "EndY")
+        ports = self._ports(path, c)
+        self.assertTrue(_has_point(ports, end),
+                        "EndX/EndY %r is not one of the target's edge midpoints %r"
+                        % (_pts([end])[0], _pts(ports)))
+        # (8.6, 4.2) is nearest the top midpoint of the box at (8, 3, 1.5, 1)
+        self.assertEqual(_pts([end])[0], (8.75, 4.0))
+        self.assertNotEqual(_pts([end])[0], _pts([old_end])[0])
+        self.assertEqual(_pts([_saved_point(root, link, "BeginX", "BeginY")])[0], _pts([begin])[0],
+                         "re-gluing the end moved the start")
+        # exactly one glue row for this end, pointing at the new target
+        rows = _connect_rows(root, link, "EndX")
+        self.assertEqual(len(rows), 1, "expected one Connects row for EndX, got %r" % (rows,))
+        self.assertEqual(rows[0]["ToSheet"], str(c))
+        self.assertEqual(rows[0]["ToCell"], "PinX")
+        self.assertEqual([r["ToSheet"] for r in _connect_rows(root, link, "BeginX")], [str(a)])
+
+    def test_reglue_uses_connection_rows_when_present(self):
+        path = self._new("reglue-port.vsdx")
+        a, b, link = self._two_boxes(path)
+        c = self._box(path, 8.0, 3.0, w=2.0, h=1.0)
+        doc = Vsdx(path)
+        _add_connection_point(doc, c, 0.25, 0.25)      # absolute (8.25, 3.25)
+        doc.save(backup=False)
+
+        doc = Vsdx(path)
+        rows = doc.shape(c, 1)["sections"]["Connection"][0]["rows"]
+        self.assertTrue(rows, "the injected Connection section did not parse")
+
+        doc.reglue(link, "end", c, x=8.9, y=4.4, page=1)
+        doc.save(backup=False)
+        end = _saved_point(_saved_page(path), link, "EndX", "EndY")
+        self.assertEqual(_pts([end])[0], (8.25, 3.25),
+                         "a declared Connection point must beat the default edge midpoints")
+        for px, py in self._ports(path, c):            # (8,3.5) (10,3.5) (9,3) (9,4)
+            self.assertNotEqual(_pts([end])[0], _pts([(px, py)])[0])
+
+    def test_reglue_start_is_symmetric(self):
+        path = self._new("reglue-start.vsdx")
+        a, b, link = self._two_boxes(path)
+        c = self._box(path, 8.0, 3.0)
+        doc = Vsdx(path)
+        doc.reglue(link, "start", c, x=8.2, y=3.1, page=1)
+        doc.save(backup=False)
+
+        root = _saved_page(path)
+        begin = _saved_point(root, link, "BeginX", "BeginY")
+        self.assertEqual(_pts([begin])[0], (8.0, 3.5), "start end did not snap to the nearest port")
+        rows = _connect_rows(root, link, "BeginX")
+        self.assertEqual(len(rows), 1, "expected one Connects row for BeginX, got %r" % (rows,))
+        self.assertEqual(rows[0]["ToSheet"], str(c))
+        self.assertEqual(rows[0]["ToCell"], "PinX")
+        # the far end still belongs to B and never moved
+        self.assertEqual(_pts([_saved_point(root, link, "EndX", "EndY")])[0], (5.0, 5.5))
+        self.assertEqual([r["ToSheet"] for r in _connect_rows(root, link, "EndX")], [str(b)])
+
+        # re-gluing the same end replaces the row instead of appending a second one
+        doc = Vsdx(path)
+        doc.reglue(link, "start", a, x=1.0, y=5.0, page=1)
+        doc.save(backup=False)
+        root = _saved_page(path)
+        rows = _connect_rows(root, link, "BeginX")
+        self.assertEqual(len(rows), 1, "re-gluing appended a duplicate Connects row: %r" % (rows,))
+        self.assertEqual(rows[0]["ToSheet"], str(a))
+        self.assertEqual(_pts([_saved_point(root, link, "BeginX", "BeginY")])[0], (1.0, 5.5))
+
+    def test_reglue_moves_the_drawn_polyline_end_too(self):
+        """A hand-drawn route must follow the endpoint, or the picture desyncs."""
+        path = self._new("reglue-route.vsdx")
+        a, b, link = self._two_boxes(path)
+        c = self._box(path, 8.0, 3.0)
+        route = [(3.0, 5.5), (4.0, 5.5), (4.0, 3.5), (5.0, 3.5)]
+        self._route(path, link, route)
+
+        doc = Vsdx(path)
+        self.assertEqual(_pts(doc.drawn_points(link, 1)), _pts(route))
+
+        doc.reglue(link, "end", c, x=8.0, y=3.6, page=1)
+        doc.save(backup=False)
+
+        doc = Vsdx(path)
+        geometry = _pts(doc.geometry_points(link, 1))
+        drawn = _pts(doc.drawn_points(link, 1))
+        port = (8.0, 3.5)                              # left midpoint of C
+        self.assertEqual(geometry[0], _pts([route[0]])[0],
+                         "reglue moved the wrong end of the polyline")
+        self.assertEqual(geometry[-1], port,
+                         "the stored polyline still ends at %r, the new port is %r"
+                         % (geometry[-1], port))
+        self.assertEqual(drawn[0], _pts([route[0]])[0])
+        self.assertEqual(drawn[-1], port, "drawn_points still shows the old end: %r" % (drawn,))
+        root = _saved_page(path)
+        self.assertEqual(_pts([_saved_point(root, link, "BeginX", "BeginY")])[0], _pts([route[0]])[0])
+        self.assertEqual(_pts([_saved_point(root, link, "EndX", "EndY")])[0], port)
+
+        # the start handle gets the same treatment
+        doc = Vsdx(path)
+        doc.reglue(link, "start", a, x=2.0, y=6.0, page=1)   # top midpoint of A
+        doc.save(backup=False)
+        doc = Vsdx(path)
+        geometry = _pts(doc.geometry_points(link, 1))
+        self.assertEqual(geometry[0], (2.0, 6.0),
+                         "the start handle did not move the polyline: %r" % (geometry,))
+        self.assertEqual(geometry[-1], port, "re-gluing the start disturbed the other end")
+        root = _saved_page(path)
+        self.assertEqual(_pts([_saved_point(root, link, "BeginX", "BeginY")])[0], (2.0, 6.0))
+
+    # --------------------------------------------------- move_segment drags
+    def test_move_segment_keeps_endpoints_and_stays_axis_aligned(self):
+        path = self._new("segment.vsdx")
+        a, b, link = self._two_boxes(path, by=3.5)
+        route = [(3.0, 5.5), (4.0, 5.5), (4.0, 3.5), (5.5, 3.5), (5.5, 4.5), (6.5, 4.5)]
+        self._route(path, link, route)
+
+        doc = Vsdx(path)
+        before = _pts(doc.drawn_points(link, 1))
+        self.assertEqual(before, _pts(route), "set_route did not survive the round trip")
+
+        delta = 0.4
+        doc.move_segment(link, 2, delta, page=1)       # horizontal run (4,3.5)->(5.5,3.5)
+        doc.save(backup=False)
+
+        doc = Vsdx(path)
+        after = _pts(doc.drawn_points(link, 1))
+        expected = [(3.0, 5.5), (4.0, 5.5), (4.0, 3.9), (5.5, 3.9), (5.5, 4.5), (6.5, 4.5)]
+        self.assertEqual(after, expected, "only the dragged run may move, and only by delta")
+        self.assertEqual(after[0], before[0], "the start point moved: %r -> %r" % (before[0], after[0]))
+        self.assertEqual(after[-1], before[-1], "the end point moved: %r -> %r" % (before[-1], after[-1]))
+        self.assertTrue(_axis_aligned(after), "the polyline is no longer axis aligned: %r" % (after,))
+        # the dragged run itself is the only run translated by delta
+        moved = _moved_runs(after, (before[2], before[3]), delta, "y")
+        self.assertEqual(len(moved), 1, "the dragged run did not move by delta: %r" % (after,))
+        self.assertEqual(_pts([moved[0][0], moved[0][1]]), [(4.0, 3.9), (5.5, 3.9)])
+        root = _saved_page(path)
+        self.assertEqual(_pts([_saved_point(root, link, "BeginX", "BeginY")])[0], before[0])
+        self.assertEqual(_pts([_saved_point(root, link, "EndX", "EndY")])[0], before[-1])
+
+    def test_move_segment_of_a_vertical_run_moves_sideways(self):
+        path = self._new("segment-vertical.vsdx")
+        a, b, link = self._two_boxes(path, by=3.5)
+        route = [(3.0, 5.5), (4.0, 5.5), (4.0, 3.5), (5.0, 3.5)]
+        self._route(path, link, route)
+
+        doc = Vsdx(path)
+        before = _pts(doc.drawn_points(link, 1))
+        doc.move_segment(link, 1, 0.4, page=1)         # vertical run (4,5.5)->(4,3.5)
+        doc.save(backup=False)
+
+        after = _pts(Vsdx(path).drawn_points(link, 1))
+        expected = [(3.0, 5.5), (4.4, 5.5), (4.4, 3.5), (5.0, 3.5)]
+        self.assertEqual(after, expected, "a vertical run must slide sideways by delta")
+        self.assertEqual(after[0], before[0])
+        self.assertEqual(after[-1], before[-1])
+        self.assertTrue(_axis_aligned(after), "not axis aligned: %r" % (after,))
+        moved = _moved_runs(after, (before[1], before[2]), 0.4, "x")
+        self.assertEqual(len(moved), 1, "the dragged run did not move by delta: %r" % (after,))
+
+    def test_move_segment_splits_a_straight_line_without_moving_ends(self):
+        path = self._new("segment-straight.vsdx")
+        a, b, link = self._two_boxes(path)             # side by side -> straight connector
+        doc = Vsdx(path)
+        before = _pts(doc.drawn_points(link, 1))
+        self.assertEqual(before, [(3.0, 5.5), (5.0, 5.5)],
+                         "expected a straight two-point connector, got %r" % (before,))
+
+        delta = 0.5
+        doc.move_segment(link, 0, delta, page=1)       # first drag splits it into a jog
+        doc.save(backup=False)
+
+        after = _pts(Vsdx(path).drawn_points(link, 1))
+        self.assertGreaterEqual(len(after), 4,
+                                "a straight line must gain a jog, got %r" % (after,))
+        self.assertEqual(after[0], before[0], "the start point moved: %r -> %r" % (before[0], after[0]))
+        self.assertEqual(after[-1], before[-1], "the end point moved: %r -> %r" % (before[-1], after[-1]))
+        self.assertTrue(_axis_aligned(after), "the jog is not axis aligned: %r" % (after,))
+        # one horizontal run sits delta above the old line, inside the old span
+        moved = [r for r in _runs(after)
+                 if abs(r[0][1] - r[1][1]) <= TOL
+                 and abs(r[0][1] - (before[0][1] + delta)) <= TOL]
+        self.assertEqual(len(moved), 1, "no run was translated by %.2f: %r" % (delta, after))
+        self.assertGreaterEqual(min(moved[0][0][0], moved[0][1][0]), before[0][0] - TOL)
+        self.assertLessEqual(max(moved[0][0][0], moved[0][1][0]), before[1][0] + TOL)
+        # and two stubs keep the line attached to both original ends
+        self.assertEqual(len([r for r in _runs(after) if abs(r[0][0] - r[1][0]) <= TOL]), 2,
+                         "the jog should have exactly two vertical stubs: %r" % (after,))
+        root = _saved_page(path)
+        self.assertEqual(_pts([_saved_point(root, link, "BeginX", "BeginY")])[0], before[0])
+        self.assertEqual(_pts([_saved_point(root, link, "EndX", "EndY")])[0], before[-1])
+
+    def test_move_segment_near_the_end_inserts_a_corner(self):
+        path = self._new("segment-tail.vsdx")
+        a, b, link = self._two_boxes(path, by=3.5)
+        route = [(3.0, 5.5), (4.0, 5.5), (4.0, 3.5), (5.0, 3.5)]
+        self._route(path, link, route)
+
+        doc = Vsdx(path)
+        before = _pts(doc.drawn_points(link, 1))
+        doc.move_segment(link, 2, 0.4, page=1)         # last run, touches the end point
+        doc.save(backup=False)
+
+        after = _pts(Vsdx(path).drawn_points(link, 1))
+        self.assertEqual(after[0], before[0], "the start point moved: %r -> %r" % (before[0], after[0]))
+        self.assertEqual(after[-1], before[-1], "the end point moved: %r -> %r" % (before[-1], after[-1]))
+        self.assertTrue(_axis_aligned(after), "not axis aligned: %r" % (after,))
+        # the tail run now sits delta above where it was, joined by a stub
+        moved = _moved_runs(after, (before[2], before[3]), 0.4, "y")
+        self.assertEqual(len(moved), 1,
+                         "the dragged tail run did not move: %r" % (after,))
+        self.assertGreaterEqual(len(after), len(before),
+                                "dragging the tail must add a corner, not drop one")
+
+    # ------------------------------------------------------------ simplify
+    def test_simplify_keeps_only_real_corners(self):
+        simplify = Vsdx._simplify
+        # collinear middle points on both legs disappear, the corner stays
+        self.assertEqual(simplify([(0, 0), (0.5, 0), (1, 0), (1, 0.5), (1, 1)]),
+                         [(0, 0), (1, 0), (1, 1)])
+        # a fully collinear run collapses to its two endpoints
+        self.assertEqual(simplify([(0, 0), (1, 0), (2, 0)]), [(0, 0), (2, 0)])
+        # duplicate points are dropped before the corner test
+        self.assertEqual(simplify([(0, 0), (0, 0), (1, 0), (1, 0), (1, 1)]),
+                         [(0, 0), (1, 0), (1, 1)])
+        # mixed: redundant points plus duplicates around two real corners
+        self.assertEqual(simplify([(0, 0), (1, 0), (2, 0), (2, 1), (2, 2), (2, 2), (3, 2)]),
+                         [(0, 0), (2, 0), (2, 2), (3, 2)])
+        # a two-point run is returned untouched, whatever its direction
+        self.assertEqual(simplify([(0, 0), (3, 4)]), [(0, 0), (3, 4)])
+        self.assertEqual(simplify([(0, 0), (1, 1)]), [(0, 0), (1, 1)])
+
+    # --------------------------------------------------------- drawn_points
+    def test_drawn_points_prefers_manual_geometry_then_simplifies_auto_route(self):
+        path = self._new("drawn.vsdx")
+        a, b, link = self._two_boxes(path, by=3.5)     # offset boxes -> Z shaped auto route
+        manual = [(3.0, 5.5), (4.0, 5.5), (4.0, 3.5), (5.5, 3.5), (5.5, 4.5)]
+        self._route(path, link, manual)
+
+        doc = Vsdx(path)
+        auto_raw, _issues = doc.page_routes(1)
+        self.assertEqual(_pts(doc.drawn_points(link, 1)), _pts(manual),
+                         "hand-drawn geometry must win over the automatic route")
+        self.assertNotEqual(_pts(doc.drawn_points(link, 1)),
+                            _pts(Vsdx._simplify(auto_raw[link])))
+        self.assertEqual(len(doc.geometry_points(link, 1)), len(manual),
+                         "the manual Geometry section lost rows")
+
+        doc.clear_route(link, page=1)
+        doc.save(backup=False)
+        doc = Vsdx(path)
+        self.assertEqual(doc.geometry_points(link, 1), [], "clear_route left Geometry behind")
+        auto_raw, _issues = doc.page_routes(1)
+        simplified = _pts(Vsdx._simplify(auto_raw[link]))
+        self.assertEqual(_pts(doc.drawn_points(link, 1)), simplified,
+                         "an automatic route must come back simplified")
+        self.assertGreater(len(auto_raw[link]), len(simplified),
+                           "the router's collinear stub points should be simplified away")
+
+    def test_drawn_points_accepts_a_two_point_manual_route(self):
+        """A two-point Geometry section is still hand-drawn, not 'no geometry'."""
+        path = self._new("drawn-two.vsdx")
+        a, b, link = self._two_boxes(path, by=3.5)     # auto route is a Z, manual is straight
+        manual = [(3.0, 5.5), (4.5, 5.5)]
+        self._route(path, link, manual)
+
+        doc = Vsdx(path)
+        auto_raw, _issues = doc.page_routes(1)
+        self.assertGreater(len(Vsdx._simplify(auto_raw[link])), 2,
+                           "the automatic route should have corners for this case")
+        self.assertEqual(_pts(doc.geometry_points(link, 1)), _pts(manual))
+        self.assertEqual(_pts(doc.drawn_points(link, 1)), _pts(manual),
+                         "a two-point manual route was ignored in favour of the auto route")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

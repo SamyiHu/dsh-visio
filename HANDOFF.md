@@ -62,62 +62,41 @@ tests/                  test_engine.py(15) / test_client_render.mjs /
 5. 自动布线留下共线冗余点，拖一段只动一部分 → 已在 `_simplify()` 里删掉
 6. `shapes()` ↔ `drawn_points()` ↔ `page_routes()` 曾互相递归爆栈 → 已用 `_no_points` 标志打断
 
-## 5. 还没验证 / 高度可疑的地方（请从这里开始）
+## 5. 已解决（2026-10-29，有浏览器实测证据）
 
-**不要继续盲改。先取得证据。**
+原来的四个疑点全部验证过了，结论如下（证据方式：真浏览器里跑真实 `client.js` + 真实引擎，
+见第 7 节的可视化调试环境）：
 
-1. **pointerdown 到底命中了什么**
-   现在 `onCanvasPointerDown` 的分支顺序是：`hand 工具` → `data-route-end` → `data-route-band`/`data-route-handle` → `data-guide` → 形状。
-   `event.target.closest()` 在 SVG 里对 `<rect>`/`<circle>` 应能向上找到 `<g data-route-*>`，但**没有实测过**。
+1. **pointerdown 命中**：`closest()` 能正常向上找到 `<g data-route-end>` / `<g data-route-handle>`，
+   抓取带 `<line data-route-band>` 也能命中。**不是命中问题。**
+2. **`currentTarget.querySelector('svg')`**：能拿到，`box`/`vb` 正常。**不是这个原因。**
+3. **选中重渲染冲掉句柄**：存在，但只在提交后发生，拖动过程中不重渲染，不影响手势。
+4. **真正的原因（四个，全部已修）**：
+   - 拖线身时 `move_segment` 的 `shape_id` 传的是 `null`（代码读的是 `data-route-handle`，
+     而抓取带上是 `data-route-band`）→ 引擎直接报错，表现就是「拖线完全没反应」。
+   - 拖端点落点算错：指针映射按 viewBox 从原点起算，但引擎给 viewBox 加了 0.25in 边距，
+     所有落点整体偏移 → 明明拖到 C，却吸到了旁边的 B。
+   - `reglue` 只改胶合行和 Begin/End 单元格，不改手绘折线 → 松手后画面上的线停在旧位置。
+   - `move_segment` 会连相邻拐角一起平移，贴着端点的那段把端点也拖走了；2 点直线只出 3 点
+     且非轴对齐 → 「拖了线，端点跑了」。
+   另外两处界面问题：zoom 工具条浮在画布上会盖住靠近底边的句柄；手绘 2 点折线会被自动布线夺回。
 
-2. **`event.currentTarget.querySelector('svg')` 是否拿得到**
-   处理器绑定在 `.dshv-svgHost` div 上，SVG 是用 `dangerouslySetInnerHTML` 注入的。若取不到 svg，`box`/`vb` 全错，整个分支直接 return（**静默失败**，正是用户看到的「完全没反馈」）。
+## 6. 回归测试（新增，别删）
 
-3. **选中重渲染会不会把句柄冲掉**
-   每次 `setDoc` 都重新注入 SVG，若拖动中途触发了一次 render，句柄节点会被替换，`pointermove` 的 `drag.node` 就指向已销毁的节点。
-
-4. **`runOp` 的 `seq` 竞态**
-   `runOp` 用 `seqRef` 丢弃过期响应；拖动后立刻 `setDoc` 可能与轮询冲突。
-
-## 6. 建议的接手方式
-
-### 第一步：拿到真实证据（不要改代码）
-在 `onCanvasPointerDown` 最开头加一行可见诊断，把命中结果写到面板状态栏（用户截图就能看到）：
-
-```js
-const hit = event.target instanceof Element
-  ? (event.target.closest('[data-route-end]') ? 'end'
-    : event.target.closest('[data-route-band]') ? 'band'
-    : event.target.closest('[data-route-handle]') ? 'dot'
-    : event.target.closest('[data-shape-id]') ? 'shape' : 'other')
-  : 'none'
-setNotice('hit: ' + hit)
-```
-
-让用户拖一次红框、截图。**一次就能定位**是「没命中」还是「命中了但提交失败」。
-
-### 第二步：如果拖拽不可靠，就换交互
-用户已被拖拽坑了 5 轮。可靠的替代方案：
-
-**点端点 → 再点目标形状**（两步式，全用 click 事件）：
-1. 选中连接线，端点显示红方块
-2. 点红方块 → 进入「等待目标」状态（端点变绿、状态栏提示）
-3. 点任意形状 → 调 `reglue(shape_id, end, to, x, y)`，落点取该形状最近的四边中点
-4. 点空白 / Esc → 取消
-
-`reglue` 引擎侧已验证可用：
-```
-reglue('12','end','2', x=1.75, y=6.35) →
-  文件里 EndX=1.75 EndY=6.35
-  Connects: [{'to':'5','cell':'BeginX'}, {'to':'3','cell':'EndX'}]   ✓
-```
-
-### 第三步：补真正有意义的测试
-现有 4 套测试**不覆盖交互**。至少补：
-
-- **引擎级**：`reglue` 后端点落在目标四边中点之一；`move_segment` 后两端点坐标不变；`_simplify` 不丢拐角
-- **交互级**：用 `tests/make_uicheck.mjs` 的思路（把真实 CSS + 组件渲染进一个静态页），在**真浏览器**里用 `dsh_browser_*` 模拟 pointerdown/move/up，断言最终调用参数
-- 浏览器已验证可用（见第 7 节）
+- `python tests/test_engine.py` → **26 tests**（原 15 + 新增 11），覆盖 `reglue` / `move_segment` /
+  `_simplify` / `drawn_points`。做过反向验证：把引擎实现换回旧版，6 条新测试会红。
+- `tests/interactive.html` + `tests/serve_engine.py` → **真浏览器交互测试 15 条全 PASS**：
+  句柄出现、线身/蓝点拖动只平移该段且两端不动、红框拖到哪个形状就胶到哪个、落点贴在目标边上、
+  zoom 条不遮句柄。跑法：
+  ```
+  python tests/make_fixture.py
+  python tests/serve_engine.py 8933
+  浏览器打开 http://127.0.0.1:8933/_harness.html?live=1&spec=1   → window.__SPEC__ 全 PASS
+  ```
+  （注意：`_harness.html` 必须挂在根路径，面板的 `apiPath()` 是按 `document.baseURI` 解析的。）
+- `node tests/test_client_render.mjs` / `node tests/test_client_contract.mjs` 仍全绿。
+- `node tests/test_host_contract.mjs` 在本机沙箱下会红：Node 里 spawn python 被拒（`spawn EPERM`），
+  是环境限制不是代码问题；在正常 shell 下跑得通。
 
 ## 7. 可视化调试环境（重要，已打通）
 
@@ -126,26 +105,31 @@ Electron 曾不可用，已用 junction 修好：
 C:\Users\SOC\.dsh\profiles\desktop\node_modules\electron\dist
   → junction → C:\Users\SOC\.dsh\electron
 ```
-`dsh_browser_*` 工具现已可用。
+`dsh_browser_*` 工具可用。
 
-**但 DSH Web UI 有会话鉴权**，直接开 `http://127.0.0.1:60764` 会得到
-`dsh web authentication required`。所以：
+**DSH Web UI 有会话鉴权**，直接开 `http://127.0.0.1:<port>` 会得到
+`dsh web authentication required`（入口是 `/?token=<launchToken>`，token 只在启动进程里，拿不到）。
+所以：
 
 - 不要试图截真实面板（会浪费大量轮次）
-- 正确做法：用 `node tests/make_uicheck.mjs` 生成静态页 → `python -m http.server 8931` 起在 `tests/` → 用 `dsh_browser_open http://127.0.0.1:8931/_uicheck.html` 打开 → `dsh_browser_screenshot` + `dsh_browser_execute` 做真实交互断言
+- 正确做法是第 6 节那套：`tests/serve_engine.py` 把真引擎挂成 HTTP，`tests/interactive.html`
+  在根路径 `/_harness.html` 渲染真面板 → `dsh_browser_execute` 派发 PointerEvent 做真实交互断言
 
 ## 8. 硬约束（别破坏）
 
 - **线宽不许改文件数值**（用户明确要求）；细线只在渲染时按 1 屏幕像素画
-- **不要测试写用户的真实图纸**，用 `examples/` 里的样例或临时副本
+- **不要测试写用户的真实图纸**，用 `examples/` 里的样例或 `tests/fixtures/` 的临时副本
 - 敏感信息不入库：不要出现 `C:\Users\SOC` 路径、真实业务图纸
 - 术语：报告里用「异常」，不用「必改」
+- 平时不改 `package.json` 版本号，只在准备发布时改
 
 ## 9. 完成标准
 
 用户能在面板里做到这三件事，并有截图证据：
+
 1. 选中连接线 → **看得到**两端红方块和段中点蓝点
 2. 把端点移到另一个形状 → 松手后端点**贴在该形状的边上**，线跟着变
 3. 把一条水平段上下拖 → 整段平移，两端不动
 
-在拿到这些之前，**不要向用户报告「已修复」**。
+三条都已在真浏览器里通过（`tests/interactive.html?spec=1` 的 15 条断言 + `docs/connector-edit.png`），
+剩下的只有用户在**真实面板**里的最终确认。
