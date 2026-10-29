@@ -762,6 +762,141 @@ class Vsdx:
             result["connected"] = True
         return result
 
+    # ---------------------------------------------------------- manual connector route
+    def _connector_points(self, shape_id, page):
+        """Current polyline of a connector: stored geometry, else Begin/End."""
+        det = self.shape(shape_id, page)
+        cells = det["cells"]
+        pts = self.geometry_points(shape_id, page)
+        if len(pts) >= 2:
+            return pts
+        return [(float(cells["BeginX"]), float(cells["BeginY"])),
+                (float(cells["EndX"]), float(cells["EndY"]) )]
+
+    ROUTE_OFFSET = 0.55
+
+    def route_style(self, shape_id, style, page: int = 1):
+        """Give a connector a simple manual detour: over, under, left or right.
+
+        This is the one-click version of Visio's "move the line out of the way": the
+        polyline is written to the file, so later edits can still drag it.
+        """
+        style = str(style or "auto").lower()
+        if style == "auto":
+            return self.clear_route(shape_id, page=page)
+        if style not in ("up", "down", "left", "right"):
+            raise VsdxError("style must be auto, up, down, left or right")
+        det = self.shape(shape_id, page)
+        c = det["cells"]
+        bx, by = float(c["BeginX"]), float(c["BeginY"])
+        ex, ey = float(c["EndX"]), float(c["EndY"])
+        off = self.ROUTE_OFFSET
+        vertical = abs(ey - by) >= abs(ex - bx)
+        # A vertical line cannot sensibly detour "up": it would run back on itself.
+        # For those the sideways styles bend the line, and up/down pick a side lane.
+        if style in ("up", "down") and vertical:
+            lane = max(bx, ex) + off if style == "up" else min(bx, ex) - off
+            pts = [(bx, by), (lane, by), (lane, ey), (ex, ey)]
+        elif style in ("left", "right") and not vertical:
+            lane = max(by, ey) + off if style == "right" else min(by, ey) - off
+            pts = [(bx, by), (bx, lane), (ex, lane), (ex, ey)]
+        elif style == "up":
+            lane = max(by, ey) + off
+            pts = [(bx, by), (bx, lane), (ex, lane), (ex, ey)]
+        elif style == "down":
+            lane = min(by, ey) - off
+            pts = [(bx, by), (bx, lane), (ex, lane), (ex, ey)]
+        elif style == "left":
+            lane = min(bx, ex) - off
+            pts = [(bx, by), (lane, by), (lane, ey), (ex, ey)]
+        else:
+            lane = max(bx, ex) + off
+            pts = [(bx, by), (lane, by), (lane, ey), (ex, ey)]
+        # drop consecutive duplicates so the polyline has no zero-length segments
+        def dedupe(items):
+            out = [items[0]]
+            for pt in items[1:]:
+                if abs(pt[0] - out[-1][0]) > 1e-6 or abs(pt[1] - out[-1][1]) > 1e-6:
+                    out.append(pt)
+            return out
+
+        clean = dedupe(pts)
+        # A detour that starts and ends on the same side of both shapes folds back on
+        # itself.  If that happens, take the sideways lane instead of drawing a loop.
+        if len(clean) == 4:
+            p0, p1, p2, p3 = clean
+            if style in ("up", "down") and vertical:
+                pass
+            elif style in ("up", "down"):
+                folded = (p1[0] == p0[0] and p2[0] == p3[0] and p1[1] == p2[1]
+                          and abs(p3[1] - p0[1]) > 0.01 and p1[1] > p0[1] and p1[1] > p3[1])
+                if folded:
+                    lane = max(bx, ex) + off
+                    clean = dedupe([(bx, by), (lane, by), (lane, ey), (ex, ey)])
+        return self.set_route(shape_id, clean, page=page)
+
+    def bend(self, shape_id, x, y, page: int = 1):
+        """Insert a bend at (x, y): the connector keeps its ends and gains a corner."""
+        pts = self._connector_points(shape_id, page)
+        best_i, best_d = 0, None
+        for i in range(len(pts) - 1):
+            ax, ay = pts[i]
+            bx, by = pts[i + 1]
+            mx, my = (ax + bx) / 2.0, (ay + by) / 2.0
+            d = (mx - x) ** 2 + (my - y) ** 2
+            if best_d is None or d < best_d:
+                best_i, best_d = i, d
+        new_pts = pts[:best_i + 1] + [(float(x), float(y))] + pts[best_i + 1:]
+        return self.set_route(shape_id, new_pts, page)
+
+    def set_route(self, shape_id, points, page: int = 1):
+        """Write an explicit polyline into the connector's Geometry section."""
+        part, root = self._page_root(page)
+        det = self.shape(shape_id, page)
+        cells = det["cells"]
+        ox = float(cells.get("PinX") or 0) - float(cells.get("LocPinX") or 0)
+        oy = float(cells.get("PinY") or 0) - float(cells.get("LocPinY") or 0)
+        for sh, _p, _d in self._iter_shapes(root.find(_v("Shapes"))):
+            if sh.get("ID") != str(shape_id):
+                continue
+            for sec in sh.findall(_v("Section")):
+                if sec.get("N") == "Geometry":
+                    sh.remove(sec)
+            sec = ET.SubElement(sh, _v("Section"))
+            sec.set("N", "Geometry")
+            sec.set("IX", "0")
+            for i, (px, py) in enumerate(points):
+                row = ET.SubElement(sec, _v("Row"))
+                row.set("T", "MoveTo" if i == 0 else "LineTo")
+                row.set("IX", str(i))
+                for name, value in (("X", px - ox), ("Y", py - oy)):
+                    c = ET.SubElement(row, _v("Cell"))
+                    c.set("N", name)
+                    c.set("V", str(round(value, 6)))
+            first, last = points[0], points[-1]
+            for name, value in (("BeginX", first[0]), ("BeginY", first[1]),
+                                ("EndX", last[0]), ("EndY", last[1])):
+                c = _cell(sh, name)
+                c.set("V", str(round(value, 6)))
+                if "F" in c.attrib:
+                    del c.attrib["F"]
+            self._write_page(part, root)
+            return {"ok": True, "shape_id": str(shape_id), "points": len(points)}
+        raise VsdxError("connector %s not found" % shape_id)
+
+    def clear_route(self, shape_id, page: int = 1):
+        """Drop the manual polyline; the automatic router takes the connector back."""
+        part, root = self._page_root(page)
+        for sh, _p, _d in self._iter_shapes(root.find(_v("Shapes"))):
+            if sh.get("ID") != str(shape_id):
+                continue
+            for sec in sh.findall(_v("Section")):
+                if sec.get("N") == "Geometry":
+                    sh.remove(sec)
+            self._write_page(part, root)
+            return {"ok": True, "shape_id": str(shape_id), "cleared": True}
+        raise VsdxError("connector %s not found" % shape_id)
+
     def delete_shape(self, shape_id, page: int = 1):
         """Delete a shape and every connector that dangles off it.
 
@@ -1691,7 +1826,13 @@ class Vsdx:
                 # short of the shape or runs into it at an angle.
                 ends = [str(c["to"]) for c in (s.get("connects") or [])]
                 boxes = [by_id[i]["bbox"] for i in ends if i in by_id]
-                pts2 = page_routes.get(s["id"]) or [(x1, y1), (x2, y2)]
+                # A connector that carries its own polyline was routed by hand: it
+                # wins over the automatic router, otherwise the user's bends vanish.
+                manual = self.geometry_points(s["id"], page)
+                if len(manual) >= 2 and len(manual) > 2:
+                    pts2 = manual
+                else:
+                    pts2 = page_routes.get(s["id"]) or [(x1, y1), (x2, y2)]
                 d = "M %0.4f %0.4f" % (pts2[0][0], H - pts2[0][1])
                 for px, py in pts2[1:]:
                     d += " L %0.4f %0.4f" % (px, H - py)

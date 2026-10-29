@@ -10,7 +10,7 @@ window.__ModuleLoader__.load({
     const PANEL_ID = 'dsh-visio'
     const POLL_MS = 2500
     // Bumped with every release: the footer shows it, so a stale bundle is obvious.
-    const CLIENT_BUILD = '1.18.4'
+    const CLIENT_BUILD = '1.19.0'
 
     /* ------------------------------------------------------------- locale */
 
@@ -41,6 +41,13 @@ window.__ModuleLoader__.load({
       geometry: '位置与大小',
       outOfPage: '已超出页面范围',
       occlusion: '遮挡',
+      route: '走线',
+      routeHint: '改完后仍可拖动线中点的蓝点继续微调',
+      route_up: '上方',
+      route_down: '下方',
+      route_left: '左侧',
+      route_right: '右侧',
+      route_auto: '自动',
       textBg: '文字背景遮挡',
       textBgHint: '打开后文本框带白底，会遮住下面的连线',
       snapBack: '拉回页面',
@@ -158,6 +165,13 @@ window.__ModuleLoader__.load({
       geometry: 'Position and size',
       outOfPage: 'Outside the page',
       occlusion: 'Occlusion',
+      route: 'Routing',
+      routeHint: 'After this you can still drag the blue dot to fine-tune',
+      route_up: 'Over',
+      route_down: 'Under',
+      route_left: 'Left',
+      route_right: 'Right',
+      route_auto: 'Auto',
       textBg: 'Opaque text background',
       textBgHint: 'Paints a white block behind the text so it hides lines underneath',
       snapBack: 'Bring back',
@@ -408,6 +422,7 @@ window.__ModuleLoader__.load({
 textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px;padding:7px 8px;resize:vertical;line-height:1.5}
 .dshv-check{display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:6px;cursor:pointer}
 .dshv-check input{accent-color:var(--dsw-alias-brand-primary)}
+.dshv-routeRow{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:4px}
 .dshv-warn{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px;color:var(--dsw-alias-state-error)}
 .dshv-row{display:flex;gap:6px;align-items:center}
 .dshv-grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;align-items:end}
@@ -564,6 +579,16 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
     function withSelection(svg, shape, pageHeight) {
       // Connector bounding boxes span their endpoints; a box around them would
       // cover half the page.  They get a stroke highlight instead (see CSS).
+      if (svg && shape && shape.connector && shape.bbox) {
+        // a single grab handle on the line: dragging it bends the connector by hand
+        const cx = shape.bbox.x + shape.bbox.w / 2
+        const cy = shape.bbox.y + shape.bbox.h / 2
+        const handle = '<g data-route-handle="' + shape.id + '" style="cursor:move">'
+          + '<circle cx="' + cx + '" cy="' + (pageHeight - cy) + '" r="0.11"'
+          + ' fill="#2F6FBF" fill-opacity="0.9" stroke="#FFFFFF" stroke-width="1"'
+          + ' vector-effect="non-scaling-stroke"/></g>'
+        return svg + handle
+      }
       if (!svg || !shape || !shape.bbox || shape.connector) return svg
       const box = shape.bbox
       const rect = '<rect x="' + box.x + '" y="' + (pageHeight - box.y - box.h).toFixed(4)
@@ -1019,6 +1044,13 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         }
       }, [runOp, t])
 
+      const routeStyle = useCallback((style) => {
+        const current = docRef.current
+        if (!current || !selectedRef.current) return
+        runOp({ action: 'route_style', path: current.path, page: current.page,
+          shape_id: selectedRef.current, style })
+      }, [runOp])
+
       const connectTo = useCallback((targetId, label) => {
         const current = docRef.current
         if (!current || !selectedRef.current || !targetId) return
@@ -1245,6 +1277,44 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
             panRef.current = null
             window.removeEventListener('pointermove', move)
             window.removeEventListener('pointerup', up)
+          }
+          window.addEventListener('pointermove', move)
+          window.addEventListener('pointerup', up)
+          return
+        }
+        const handle = event.target instanceof Element ? event.target.closest('[data-route-handle]') : null
+        if (handle) {
+          event.preventDefault()
+          const current = docRef.current
+          const svgEl = event.currentTarget.querySelector('svg')
+          if (!current || !svgEl) return
+          const box = svgEl.getBoundingClientRect()
+          const vb = svgEl.viewBox && svgEl.viewBox.baseVal ? svgEl.viewBox.baseVal : null
+          if (!vb || !box.width) return
+          const scale = box.width / vb.width
+          const start = { x: event.clientX, y: event.clientY }
+          const target = current.shapes.find((item) => item.id === handle.getAttribute('data-route-handle'))
+          const move = (e) => {
+            const tip = tipRef.current
+            if (!tip || !tip.parentElement) return
+            const host = tip.parentElement.getBoundingClientRect()
+            tip.style.display = 'block'
+            tip.style.left = `${e.clientX - host.left + 14}px`
+            tip.style.top = `${e.clientY - host.top - 30}px`
+            tip.textContent = `拐点 X ${(target.bbox.x + target.bbox.w / 2 + (e.clientX - start.x) / scale).toFixed(2)}`
+              + `  Y ${(target.bbox.y + target.bbox.h / 2 - (e.clientY - start.y) / scale).toFixed(2)}`
+          }
+          const up = (e) => {
+            window.removeEventListener('pointermove', move)
+            window.removeEventListener('pointerup', up)
+            if (tipRef.current) tipRef.current.style.display = 'none'
+            const dx = (e.clientX - start.x) / scale
+            const dy = (e.clientY - start.y) / scale
+            if (Math.abs(dx) + Math.abs(dy) < 0.02) return
+            const bx = target.bbox.x + target.bbox.w / 2 + dx
+            const by = target.bbox.y + target.bbox.h / 2 - dy
+            runOp({ action: 'bend', path: current.path, page: current.page,
+              shape_id: target.id, x: bx, y: by })
           }
           window.addEventListener('pointermove', move)
           window.addEventListener('pointerup', up)
@@ -1510,6 +1580,7 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
                   onSetProp: setProp,
                   onDelete: removeShape,
                   onConnect: connectTo,
+                  onRouteStyle: routeStyle,
                   onDeselect: () => setSelected(null),
                 })
               : h('div', { className: 'dshv-empty', style: { padding: 24 } },
@@ -1548,7 +1619,7 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
 
     /* ------------------------------------------------------------ inspector */
 
-    function ShapeInspector({ t, doc, shape, detail, onCommitText, onCommitCell, onCommitMove, onSetProp, onDelete, onConnect, onDeselect }) {
+    function ShapeInspector({ t, doc, shape, detail, onCommitText, onCommitCell, onCommitMove, onSetProp, onDelete, onConnect, onRouteStyle, onDeselect }) {
       const [text, setText] = useState(detail.text || '')
       const [propName, setPropName] = useState('')
       const [propValue, setPropValue] = useState('')
@@ -1611,6 +1682,19 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
             onBlur: commitText,
             onKeyDown: (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) e.currentTarget.blur() },
           })),
+
+        detail.type === 'Shape' && shape && shape.connector
+          ? h('div', { className: 'dshv-section' },
+              h('div', { className: 'dshv-sectionTitle' }, t('route')),
+              h('div', { className: 'dshv-routeRow' },
+                ['up', 'down', 'left', 'right'].map((style) =>
+                  h(Btn, {
+                    key: style, small: true, variant: 'ghost',
+                    onClick: () => onRouteStyle(style),
+                  }, t('route_' + style))),
+                h(Btn, { small: true, variant: 'ghost', onClick: () => onRouteStyle('auto') }, t('route_auto'))),
+              h('div', { className: 'dshv-hint' }, t('routeHint')))
+          : null,
 
         h('div', { className: 'dshv-section' },
           h('div', { className: 'dshv-sectionTitle' }, t('geometry')),

@@ -429,7 +429,8 @@ const TOOL_PARAMETERS = {
     action: {
       type: 'string',
       enum: ['open', 'text', 'get_shape', 'create', 'list', 'set_text', 'set_cell', 'set_prop',
-        'add_shape', 'move', 'connect', 'probe', 'duplicate', 'delete', 'validate', 'kinds', 'stencils',
+        'add_shape', 'move', 'connect', 'probe', 'duplicate', 'route_style', 'bend',
+        'clear_route', 'delete', 'validate', 'kinds', 'stencils',
         'stencil_add', 'stencil_info', 'stencil_sheet', 'snapshot', 'capabilities',
         'undo', 'redo', 'normalize', 'export'],
       description:
@@ -463,6 +464,8 @@ const TOOL_PARAMETERS = {
       description: 'probe / duplicate: which side of the shape to look at or copy onto.' },
     gap: { type: 'number', description: 'duplicate: inches between the source and the copy (default 0.4).' },
     connect: { type: 'boolean', description: 'duplicate: glue a connector to the copy (default true).' },
+    style: { type: 'string', enum: ['auto', 'up', 'down', 'left', 'right'],
+      description: 'route_style: which way a connector should detour (auto = back to automatic routing).' },
     file: { type: 'string', description: 'Path to a .vssx/.vstx stencil for stencil_info / stencil_sheet / stencils.' },
     all: { type: 'boolean', description: 'snapshot: render every page (default: current page only).' },
     dpi: { type: 'number', description: 'snapshot: pixels per inch (default 110).' },

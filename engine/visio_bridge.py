@@ -769,6 +769,62 @@ def action_duplicate(req):
                        notice="已复制为 #%s" % result["new_id"], saved=True)
 
 
+def action_bend(req):
+    """Insert a bend point into a connector's polyline (manual routing)."""
+    path = drawing_path(req.get("path"))
+    doc = load_doc(path)
+    page = page_of(req.get("page"), doc.pages)
+    sid = text(req.get("shape_id"), "shape_id", 40)
+    x = number(req.get("x"), "x")
+    y = number(req.get("y"), "y")
+    doc.bend(sid, x, y, page=page)
+    save_doc(doc, req.get("backup", True))
+    return build_state(path, page, sid, notice="已添加拐点", saved=True)
+
+
+def action_set_route(req):
+    """Replace the connector's polyline with an explicit list of points."""
+    path = drawing_path(req.get("path"))
+    doc = load_doc(path)
+    page = page_of(req.get("page"), doc.pages)
+    sid = text(req.get("shape_id"), "shape_id", 40)
+    raw = req.get("points") or []
+    points = []
+    for item in raw:
+        if isinstance(item, (list, tuple)) and len(item) >= 2:
+            points.append((number(item[0], "x"), number(item[1], "y")))
+        elif isinstance(item, dict):
+            points.append((number(item.get("x"), "x"), number(item.get("y"), "y")))
+    if len(points) < 2:
+        raise BadRequest("points must contain at least two [x, y] pairs")
+    doc.set_route(sid, points, page=page)
+    save_doc(doc, req.get("backup", True))
+    return build_state(path, page, sid, notice="走线已更新", saved=True)
+
+
+def action_clear_route(req):
+    path = drawing_path(req.get("path"))
+    doc = load_doc(path)
+    page = page_of(req.get("page"), doc.pages)
+    sid = text(req.get("shape_id"), "shape_id", 40)
+    doc.clear_route(sid, page=page)
+    save_doc(doc, req.get("backup", True))
+    return build_state(path, page, sid, notice="已恢复自动走线", saved=True)
+
+
+def action_route_style(req):
+    """One-click detour for a connector: up, down, left, right, or auto."""
+    path = drawing_path(req.get("path"))
+    doc = load_doc(path)
+    page = page_of(req.get("page"), doc.pages)
+    sid = text(req.get("shape_id"), "shape_id", 40)
+    style = text(req.get("style"), "style", 10) or "auto"
+    doc.route_style(sid, style, page=page)
+    save_doc(doc, req.get("backup", True))
+    notice = "已恢复自动走线" if style == "auto" else "走线已改为%s" % style
+    return build_state(path, page, sid, notice=notice, saved=True)
+
+
 ACTIONS = {
     "ping": action_ping,
     "list": action_list,
@@ -791,6 +847,10 @@ ACTIONS = {
     "add_shape": action_add_shape,
     "connect": action_connect,
     "probe": action_probe,
+    "bend": action_bend,
+    "route_style": action_route_style,
+    "set_route": action_set_route,
+    "clear_route": action_clear_route,
     "duplicate": action_duplicate,
     "delete": action_delete,
     "normalize": action_normalize,

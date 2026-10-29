@@ -46,7 +46,7 @@ for (const action of ['open', 'text', 'get_shape', 'create', 'list', 'set_text',
 }
 assert.deepEqual(Object.keys(tool.parameters.properties).sort(), [
   'action', 'all', 'cell', 'connect', 'dpi', 'dir', 'direction', 'file', 'format', 'from',
-  'gap', 'h', 'height', 'kind', 'label',
+  'gap', 'h', 'height', 'kind', 'label', 'style',
   'master', 'name', 'out', 'page', 'path', 'shape_id', 'stencil', 'text', 'title', 'to', 'value',
   'w', 'width', 'x', 'y',
 ].sort())

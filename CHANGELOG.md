@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.19.0
+- Connector routing can be edited by hand. Select a connector and the inspector shows a
+  **走线** section: over / under / left / right, or auto. The polyline is written into the
+  connector's `Geometry` section, and a hand-routed connector is no longer touched by the
+  automatic router.
+- A blue dot on the selected connector can be dragged to add a bend (`bend`), so the line
+  can be shaped point by point.
+- A detour that would fold back on itself is redirected to a sideways lane instead.
+
+
 ## 1.18.4
 - Fixed the reset and close buttons of the floating window: a pointerdown on the title bar
   called `preventDefault()`, which swallowed the click that followed.
