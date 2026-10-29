@@ -592,9 +592,11 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         // the two ends: dragging one re-glues that end to the nearest shape
         for (const [tag, idx] of [['start', 0], ['end', pts.length - 1]]) {
           const [ex, ey] = pts[idx]
+          // an end handle must stay visible at any zoom, so its outline is drawn in
+          // screen pixels and it is bigger than the segment dots
           handles += '<g data-route-end="' + shape.id + '" data-end="' + tag + '" style="cursor:pointer">'
-            + '<rect x="' + (ex - 0.09) + '" y="' + (pageHeight - ey - 0.09) + '" width="0.18" height="0.18"'
-            + ' fill="#E5484D" fill-opacity="0.9" stroke="#FFFFFF" stroke-width="1"'
+            + '<rect x="' + (ex - 0.13) + '" y="' + (pageHeight - ey - 0.13) + '" width="0.26" height="0.26"'
+            + ' rx="0.03" fill="#E5484D" fill-opacity="0.95" stroke="#FFFFFF" stroke-width="2"'
             + ' vector-effect="non-scaling-stroke"/></g>'
         }
         for (let i = 0; i < pts.length - 1; i += 1) {
@@ -605,8 +607,8 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           const vertical = Math.abs(bx - ax) < Math.abs(by - ay)
           handles += '<g data-route-handle="' + shape.id + '" data-seg="' + i + '"'
             + ' data-axis="' + (vertical ? 'x' : 'y') + '" style="cursor:' + (vertical ? 'ew-resize' : 'ns-resize') + '">'
-            + '<circle cx="' + mx + '" cy="' + (pageHeight - my) + '" r="0.10"'
-            + ' fill="#2F6FBF" fill-opacity="0.85" stroke="#FFFFFF" stroke-width="1"'
+            + '<circle cx="' + mx + '" cy="' + (pageHeight - my) + '" r="0.13"'
+            + ' fill="#2F6FBF" fill-opacity="0.9" stroke="#FFFFFF" stroke-width="2"'
             + ' vector-effect="non-scaling-stroke"/></g>'
         }
         // must go *inside* the svg element, otherwise the browser never renders it

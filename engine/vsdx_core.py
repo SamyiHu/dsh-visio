@@ -922,13 +922,28 @@ class Vsdx:
         det = self.shape(shape_id, page)
         c = det["cells"]
         prefix = "Begin" if end == "start" else "End"
+        target = next((s for s in self.shapes(page) if s["id"] == str(to_id)), None)
+        if target is None:
+            raise VsdxError("shape %s not found" % to_id)
+        # Snap to the target's nearest connection point.  A connector end must sit on a
+        # port, otherwise Visio shows a floating stub that is not glued to anything.
+        b = target["bbox"]
+        ports = []
+        det_t = self.shape(str(to_id), page)
+        for sec in det_t["sections"].get("Connection", []):
+            for row in sec["rows"]:
+                cells_ = row["cells"]
+                ports.append((b["x"] + float(cells_.get("X") or 0),
+                              b["y"] + float(cells_.get("Y") or 0)))
+        if not ports:
+            ports = [(b["x"], b["y"] + b["h"] / 2.0),
+                     (b["x"] + b["w"], b["y"] + b["h"] / 2.0),
+                     (b["x"] + b["w"] / 2.0, b["y"]),
+                     (b["x"] + b["w"] / 2.0, b["y"] + b["h"])]
         if x is None or y is None:
-            target = next((s for s in self.shapes(page) if s["id"] == str(to_id)), None)
-            if target is None:
-                raise VsdxError("shape %s not found" % to_id)
-            b = target["bbox"]
-            x = b["x"] + b["w"] / 2.0
-            y = b["y"] + b["h"] / 2.0
+            x, y = b["x"] + b["w"] / 2.0, b["y"] + b["h"] / 2.0
+        px, py = min(ports, key=lambda pt: (pt[0] - x) ** 2 + (pt[1] - y) ** 2)
+        x, y = px, py
         part, root = self._page_root(page)
         conns = root.find(_v("Connects"))
         if conns is None:

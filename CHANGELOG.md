@@ -6,6 +6,11 @@
   polyline that is actually rendered.
 - Dragging a connector segment used the same two-point stub, so the first drag replaced the
   automatic route with a two-point detour. It now starts from the drawn polyline.
+- A dragged connector end now **snaps to the nearest connection point** of the target shape
+  (four edge midpoints, or the shape's own `Connection` rows), so the end is glued to a real
+  port instead of floating where the mouse was released.
+- Connector handles are larger with a screen-pixel outline, so they stay visible when zoomed
+  out.
 
 
 ## 1.20.0
