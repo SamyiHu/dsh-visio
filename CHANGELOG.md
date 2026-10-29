@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.18.0
+- Guide arrows on the four sides of a selected shape. Clicking one **connects** to an
+  aligned neighbour (`probe` finds it), or **duplicates** the shape in that direction and
+  links the copy when nothing is aligned.
+- `Delete` / `Backspace` deletes the selection without a dialog (undo covers it), `Esc`
+  clears the selection; typing in a field still never triggers them.
+- New engine actions `probe` and `duplicate`, also exposed to the `visio` tool.
+
+
 ## 1.17.0
 - Connectors are laid out from Visio's **connection points**: `Section N="Connection"`
   rows when a shape defines them (X/Y plus the DirX/DirY normal), otherwise the four edge

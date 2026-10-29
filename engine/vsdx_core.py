@@ -669,6 +669,99 @@ class Vsdx:
         self._write_page(part, root)
         return sid
 
+    # -------------------------------------------------------------- duplicate / probe
+    DIRECTIONS = ("right", "left", "up", "down")
+
+    def probe(self, shape_id, direction, gap=0.4, tol=0.35, reach=3.0, page: int = 1):
+        """Is there an aligned neighbour on that side?  (drives the guide arrows)
+
+        "Aligned" means the neighbour sits on that side, its centre line is within
+        `tol` inches, the gap is at most `reach`, and it still has a free connection
+        point on the side that faces us.
+        """
+        shapes = [s for s in self.shapes(page) if not s["connector"] and s["type"] != "Guide"]
+        me = next((s for s in shapes if s["id"] == str(shape_id)), None)
+        if me is None:
+            raise VsdxError("shape %s not found" % shape_id)
+        if direction not in self.DIRECTIONS:
+            raise VsdxError("direction must be one of %s" % ", ".join(self.DIRECTIONS))
+        b = me["bbox"]
+        cx, cy = b["x"] + b["w"] / 2.0, b["y"] + b["h"] / 2.0
+        best, best_d = None, None
+        for other in shapes:
+            if other["id"] == me["id"]:
+                continue
+            o = other["bbox"]
+            ocx, ocy = o["x"] + o["w"] / 2.0, o["y"] + o["h"] / 2.0
+            if direction == "right":
+                ok = ocx > cx and abs(ocy - cy) <= tol
+                gap_ = o["x"] - (b["x"] + b["w"])
+            elif direction == "left":
+                ok = ocx < cx and abs(ocy - cy) <= tol
+                gap_ = b["x"] - (o["x"] + o["w"])
+            elif direction == "up":
+                ok = ocy > cy and abs(ocx - cx) <= tol
+                gap_ = o["y"] - (b["y"] + b["h"])
+            else:
+                ok = ocy < cy and abs(ocx - cx) <= tol
+                gap_ = b["y"] - (o["y"] + o["h"])
+            if not ok or gap_ < -0.05 or gap_ > reach:
+                continue
+            if best_d is None or gap_ < best_d:
+                best, best_d = other, gap_
+        return {"ok": True, "shape_id": str(shape_id), "direction": direction,
+                "target": best["id"] if best else None,
+                "gap": round(best_d, 4) if best_d is not None else None,
+                "bbox": b}
+
+    def duplicate(self, shape_id, direction="right", gap=0.4, connect=True, page: int = 1):
+        """Copy a shape onto the given side; optionally glue a connector to it."""
+        if direction not in self.DIRECTIONS:
+            raise VsdxError("direction must be one of %s" % ", ".join(self.DIRECTIONS))
+        part, root = self._page_root(page)
+        src = None
+        for sh, _p, _d in self._iter_shapes(root.find(_v("Shapes"))):
+            if sh.get("ID") == str(shape_id):
+                src = sh
+                break
+        if src is None:
+            raise VsdxError("shape %s not found on page %d" % (shape_id, page))
+        new_id = self._new_id(root)
+        clone = copy.deepcopy(src)
+        clone.set("ID", new_id)
+        name_u = clone.get("NameU") or ""
+        if name_u.startswith("Sheet."):
+            clone.set("NameU", "Sheet.%s" % new_id)
+        # connectors never get duplicated as shapes; this is for 2-D nodes only
+        if clone.get("NameU", "").lower().startswith("dynamic connector"):
+            raise VsdxError("connectors cannot be duplicated this way")
+        bbox = next(s for s in self.shapes(page) if s["id"] == str(shape_id))["bbox"]
+        dx, dy = 0.0, 0.0
+        if direction == "right":
+            dx = bbox["w"] + gap
+        elif direction == "left":
+            dx = -(bbox["w"] + gap)
+        elif direction == "up":
+            dy = bbox["h"] + gap
+        else:
+            dy = -(bbox["h"] + gap)
+        for cell in clone.findall(_v("Cell")):
+            if cell.get("N") == "PinX":
+                cell.set("V", str(round(float(cell.get("V") or 0) + dx, 6)))
+            elif cell.get("N") == "PinY":
+                cell.set("V", str(round(float(cell.get("V") or 0) + dy, 6)))
+        # a clone must not inherit the source's glue rows
+        for rel in clone.findall(_v("Connect")):
+            clone.remove(rel)
+        root.find(_v("Shapes")).append(clone)
+        self._write_page(part, root)
+        result = {"ok": True, "shape_id": str(shape_id), "new_id": new_id,
+                  "direction": direction, "connected": False}
+        if connect:
+            self.connect(shape_id, new_id, page=page)
+            result["connected"] = True
+        return result
+
     def delete_shape(self, shape_id, page: int = 1):
         """Delete a shape and every connector that dangles off it.
 

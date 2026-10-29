@@ -739,6 +739,36 @@ def action_move_label(req):
     return build_state(path, page, sid, notice="文字位置已保存", saved=True)
 
 
+def action_probe(req):
+    path = drawing_path(req.get("path"))
+    doc = load_doc(path)
+    page = page_of(req.get("page"), doc.pages)
+    sid = text(req.get("shape_id"), "shape_id", 40)
+    direction = text(req.get("direction"), "direction", 10) or "right"
+    result = doc.probe(sid, direction, page=page,
+                       gap=number(req.get("gap") or 0.4, "gap"),
+                       tol=number(req.get("tol") or 0.35, "tol"),
+                       reach=number(req.get("reach") or 3.0, "reach"))
+    result["path"] = path
+    result["page"] = page
+    return result
+
+
+def action_duplicate(req):
+    path = drawing_path(req.get("path"))
+    doc = load_doc(path)
+    page = page_of(req.get("page"), doc.pages)
+    sid = text(req.get("shape_id"), "shape_id", 40)
+    direction = text(req.get("direction"), "direction", 10) or "right"
+    result = doc.duplicate(sid, direction=direction,
+                           gap=number(req.get("gap") or 0.4, "gap"),
+                           connect=req.get("connect", True) is not False,
+                           page=page)
+    save_doc(doc, req.get("backup", True))
+    return build_state(path, page, result["new_id"],
+                       notice="已复制为 #%s" % result["new_id"], saved=True)
+
+
 ACTIONS = {
     "ping": action_ping,
     "list": action_list,
@@ -760,6 +790,8 @@ ACTIONS = {
     "set_prop": action_set_prop,
     "add_shape": action_add_shape,
     "connect": action_connect,
+    "probe": action_probe,
+    "duplicate": action_duplicate,
     "delete": action_delete,
     "normalize": action_normalize,
     "export": action_export,

@@ -10,7 +10,7 @@ window.__ModuleLoader__.load({
     const PANEL_ID = 'dsh-visio'
     const POLL_MS = 2500
     // Bumped with every release: the footer shows it, so a stale bundle is obvious.
-    const CLIENT_BUILD = '1.17.0'
+    const CLIENT_BUILD = '1.18.0'
 
     /* ------------------------------------------------------------- locale */
 
@@ -59,6 +59,8 @@ window.__ModuleLoader__.load({
       deleteShape: '删除形状',
       connectTo: '连接到',
       connect: '加连接线',
+      connectedTo: '已连接到 #{id}',
+      duplicatedAs: '已复制并连接 #{id}',
       connectLabel: '连接线文字',
       tools: '添加形状',
       addRect: '矩形',
@@ -172,6 +174,8 @@ window.__ModuleLoader__.load({
       deleteShape: 'Delete shape',
       connectTo: 'Connect to',
       connect: 'Add connector',
+      connectedTo: 'Connected to #{id}',
+      duplicatedAs: 'Duplicated and linked #{id}',
       connectLabel: 'Connector text',
       tools: 'Add shape',
       addRect: 'Rectangle',
@@ -562,10 +566,33 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         + '" width="' + box.w + '" height="' + box.h
         + '" fill="none" stroke="#2F6FBF" stroke-width="1.6" vector-effect="non-scaling-stroke"'
         + ' stroke-dasharray="5 3" pointer-events="none"/>'
+      // Guide arrows on the four sides: click = connect to an aligned neighbour,
+      // or duplicate in that direction when nothing is there yet.
+      const cx = box.x + box.w / 2
+      const cy = box.y + box.h / 2
+      const top = pageHeight - box.y - box.h
+      const gap = 0.30
+      const arm = 0.30
+      const guides = [
+        { dir: 'left', x: box.x - gap, y: top + box.h / 2, dx: -arm, dy: 0 },
+        { dir: 'right', x: box.x + box.w + gap, y: top + box.h / 2, dx: arm, dy: 0 },
+        { dir: 'up', x: cx, y: top - gap, dx: 0, dy: -arm },
+        { dir: 'down', x: cx, y: top + box.h + gap, dx: 0, dy: arm },
+      ].map((g) => {
+        const tip = 'M ' + g.x + ' ' + g.y + ' L ' + (g.x - g.dx) + ' ' + (g.y - g.dy)
+        const a = 'M ' + g.x + ' ' + g.y + ' L ' + (g.x - g.dx * 0.45 - g.dy * 0.32) + ' ' + (g.y - g.dy * 0.45 - g.dx * 0.32)
+        const b = 'M ' + g.x + ' ' + g.y + ' L ' + (g.x - g.dx * 0.45 + g.dy * 0.32) + ' ' + (g.y - g.dy * 0.45 + g.dx * 0.32)
+        return '<g data-guide="' + g.dir + '" data-guide-shape="' + shape.id + '" style="cursor:pointer">'
+          + '<circle cx="' + g.x + '" cy="' + g.y + '" r="0.16" fill="#FFFFFF" fill-opacity="0.9" stroke="#8A94A6" stroke-width="1" vector-effect="non-scaling-stroke"/>'
+          + '<path d="' + tip + '" stroke="#8A94A6" stroke-width="1.4" vector-effect="non-scaling-stroke" fill="none"/>'
+          + '<path d="' + a + '" stroke="#8A94A6" stroke-width="1.2" vector-effect="non-scaling-stroke" fill="none"/>'
+          + '<path d="' + b + '" stroke="#8A94A6" stroke-width="1.2" vector-effect="non-scaling-stroke" fill="none"/>'
+          + '</g>'
+      }).join('')
       const tag = '<g data-shape-id="' + shape.id + '">'
       const at = svg.indexOf(tag)
       if (at < 0) return svg
-      return svg.slice(0, at + tag.length) + rect + svg.slice(at + tag.length)
+      return svg.slice(0, at + tag.length) + rect + guides + svg.slice(at + tag.length)
     }
 
     const LAST_DOC = 'dshv:lastDoc'
@@ -715,22 +742,6 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         runOp({ action, path: current.path, page: current.page })
       }, [runOp])
 
-      useEffect(() => {
-        const onKey = (event) => {
-          if (!(event.ctrlKey || event.metaKey)) return
-          const key = String(event.key || '').toLowerCase()
-          if (key !== 'z' && key !== 'y') return
-          const root = rootRef.current
-          const active = document.activeElement
-          if (root && event.target && !root.contains(event.target) && !root.contains(active)) return
-          const tag = active ? active.tagName : ''
-          if (tag === 'INPUT' || tag === 'TEXTAREA' || (active && active.isContentEditable)) return
-          event.preventDefault()
-          undoTo(key === 'y' || event.shiftKey ? 'redo' : 'undo')
-        }
-        window.addEventListener('keydown', onKey)
-        return () => window.removeEventListener('keydown', onKey)
-      }, [undoTo])
 
       const loadFolder = useCallback(async (target) => {
         if (!target) return
@@ -934,11 +945,74 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         })
       }, [runOp, stencilFile])
 
-      const removeShape = useCallback(() => {
+      const removeShape = useCallback((options = {}) => {
         const current = docRef.current
         if (!current || !selectedRef.current) return
-        if (!window.confirm(t('deleteConfirm', { id: selectedRef.current }))) return
+        if (options.confirm !== false && !window.confirm(t('deleteConfirm', { id: selectedRef.current }))) return
         runOp({ action: 'delete', path: current.path, page: current.page, shape_id: selectedRef.current })
+      }, [runOp, t])
+
+      useEffect(() => {
+        const onKey = (event) => {
+          const root = rootRef.current
+          const active = document.activeElement
+          if (root && event.target && !root.contains(event.target) && !root.contains(active)) return
+          const tag = active ? active.tagName : ''
+          const typing = tag === 'INPUT' || tag === 'TEXTAREA' || (active && active.isContentEditable)
+          if (typing) return
+          const key = String(event.key || '').toLowerCase()
+          if ((event.ctrlKey || event.metaKey) && (key === 'z' || key === 'y')) {
+            event.preventDefault()
+            undoTo(key === 'y' || event.shiftKey ? 'redo' : 'undo')
+            return
+          }
+          if (event.ctrlKey || event.metaKey || event.altKey) return
+          if (key === 'delete' || key === 'backspace') {
+            if (!selectedRef.current) return
+            event.preventDefault()
+            removeShape({ confirm: false })
+            return
+          }
+          if (key === 'escape') {
+            event.preventDefault()
+            setSelected(null)
+          }
+        }
+        window.addEventListener('keydown', onKey)
+        return () => window.removeEventListener('keydown', onKey)
+      }, [undoTo, removeShape])
+
+      const useGuide = useCallback(async (direction) => {
+        const current = docRef.current
+        const id = selectedRef.current
+        if (!current || !id) return
+        setBusy(true)
+        try {
+          const probe = await postJson(`${ROUTE}/op`, {
+            action: 'probe', path: current.path, page: current.page, shape_id: id, direction,
+          })
+          if (probe && probe.target) {
+            await postJson(`${ROUTE}/op`, {
+              action: 'connect', path: current.path, page: current.page,
+              from: id, to: probe.target,
+            })
+            setNotice(t('connectedTo', { id: probe.target }))
+          } else {
+            const made = await postJson(`${ROUTE}/op`, {
+              action: 'duplicate', path: current.path, page: current.page,
+              shape_id: id, direction, connect: true,
+            })
+            setNotice(t('duplicatedAs', { id: made && made.shape_id ? made.shape_id : '' }))
+          }
+          const fresh = await runOp({
+            action: 'render', path: current.path, page: current.page, selected: id,
+          }, { quiet: true })
+          if (fresh) setDoc(fresh)
+        } catch (err) {
+          setError(String(err && err.message ? err.message : err))
+        } finally {
+          setBusy(false)
+        }
       }, [runOp, t])
 
       const connectTo = useCallback((targetId, label) => {
@@ -1072,6 +1146,13 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           }
           window.addEventListener('pointermove', move)
           window.addEventListener('pointerup', up)
+          return
+        }
+        const guide = event.target instanceof Element ? event.target.closest('[data-guide]') : null
+        if (guide) {
+          event.preventDefault()
+          event.stopPropagation()
+          useGuide(guide.getAttribute('data-guide'))
           return
         }
         const current = docRef.current
