@@ -10,7 +10,7 @@ window.__ModuleLoader__.load({
     const PANEL_ID = 'dsh-visio'
     const POLL_MS = 2500
     // Bumped with every release: the footer shows it, so a stale bundle is obvious.
-    const CLIENT_BUILD = '1.18.1'
+    const CLIENT_BUILD = '1.18.2'
 
     /* ------------------------------------------------------------- locale */
 
@@ -121,6 +121,7 @@ window.__ModuleLoader__.load({
       toggleInspector: '显示/隐藏右侧属性',
       floatTip: '打开浮动画布窗口（可拖动、可改大小）',
       floatTitle: 'Visio 图纸 · 浮动画布',
+      floatMove: '拖动移动',
       floatClose: '收起窗口',
       fixUnits: '修复单位',
       fixUnitsTip: '把文件里标错的单位（U=MM/PT）改回 Visio 内部单位，修正 Visio 打开时页面/字号/线宽异常',
@@ -236,6 +237,7 @@ window.__ModuleLoader__.load({
       toggleInspector: 'Show or hide the inspector',
       floatTip: 'Open the floating Visio canvas (drag and resize)',
       floatTitle: 'Visio drawing · floating canvas',
+      floatMove: 'Drag to move',
       floatClose: 'Close window',
       fixUnits: 'Fix units',
       fixUnitsTip: 'Rewrite mislabelled cell units (U=MM/PT) to Visio internal units so page size, font size and line weight match',
@@ -1778,6 +1780,10 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
 .dshv-floatClose:hover{background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary)}
 .dshv-floatBody{flex:1;min-height:0;overflow:hidden;display:flex}
 .dshv-floatBody > .dshv-root{flex:1;min-width:0;height:100%}
+.dshv-floatMove{position:absolute;left:6px;top:50%;transform:translateY(-50%);width:14px;height:44px;
+  display:flex;align-items:center;justify-content:center;flex-direction:column;gap:2px;font-size:9px;line-height:1;
+  color:var(--dsw-alias-label-secondary);opacity:.55;cursor:move;user-select:none;touch-action:none;border-radius:6px}
+.dshv-floatMove:hover{opacity:1;background:var(--dsw-alias-bg-layer-1)}
 .dshv-floatGrip{position:absolute;right:0;bottom:0;width:18px;height:18px;cursor:nwse-resize;touch-action:none;
   background:linear-gradient(135deg, transparent 50%, var(--dsw-alias-border-l2) 50%)}
 .dshv-svgHost [data-shape-id]{cursor:move}
@@ -1806,9 +1812,50 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
 .dshv-toggle.on{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1)}
 `
 
+    const FAB_POS = 'dsh-visio.fab.pos.v1'
+
     function FloatingVisio(props) {
       const { t } = props
       const [open, setOpen] = useState(false)
+      // the launcher itself is draggable; a drag must not toggle the window
+      const [fab, setFab] = useState(() => {
+        try {
+          const saved = JSON.parse(window.localStorage.getItem(FAB_POS) || 'null')
+          if (saved && Number.isFinite(saved.x) && Number.isFinite(saved.y)) return saved
+        } catch (err) { /* ignore */ }
+        return null
+      })
+      const fabRef = useRef(fab)
+      const moveFab = (next) => {
+        fabRef.current = next
+        setFab(next)
+        try { window.localStorage.setItem(FAB_POS, JSON.stringify(next)) } catch (err) { /* ignore */ }
+      }
+      const startFabDrag = (event) => {
+        if (event.button !== 0) return
+        const start = { x: event.clientX, y: event.clientY, fab: fabRef.current, moved: false }
+        const move = (e) => {
+          const dx = e.clientX - start.x
+          const dy = e.clientY - start.y
+          if (!start.moved && Math.abs(dx) + Math.abs(dy) < 4) return
+          start.moved = true
+          const vw = window.innerWidth || 1280
+          const vh = window.innerHeight || 800
+          const w = 96
+          const h = 34
+          moveFab({
+            x: Math.min(Math.max(8, (start.fab ? start.fab.x : vw - w - 20) + dx), vw - w - 8),
+            y: Math.min(Math.max(8, (start.fab ? start.fab.y : vh - h - 20) + dy), vh - h - 8),
+          })
+        }
+        const up = () => {
+          window.removeEventListener('pointermove', move)
+          window.removeEventListener('pointerup', up)
+          if (!start.moved) setOpen((value) => !value)
+        }
+        window.addEventListener('pointermove', move)
+        window.addEventListener('pointerup', up)
+      }
       const [geom, setGeom] = useState(() => {
         let saved = null
         try { saved = JSON.parse(window.localStorage.getItem(FLOAT_GEOM) || 'null') } catch (err) { saved = null }
@@ -1866,7 +1913,8 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         h('div', {
           className: `dshv-fab${open ? ' active' : ''}`,
           title: t('floatTip'),
-          onClick: () => setOpen((value) => !value),
+          style: fab ? { left: fab.x, top: fab.y, right: 'auto', bottom: 'auto' } : undefined,
+          onPointerDown: startFabDrag,
         }, h(Icon, { size: 15 }), h('span', null, t('nav'))),
         open
           ? h('div', { className: 'dshv-float', style: { left: geom.x, top: geom.y, width: geom.w, height: geom.h } },
@@ -1878,6 +1926,8 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
                   onClick: (event) => { event.stopPropagation(); setOpen(false) },
                 }, '\u00d7')),
               h('div', { className: 'dshv-floatBody' }, h(VisioPanel, props)),
+              h('div', { className: 'dshv-floatMove', title: t('floatMove'), onPointerDown: startDrag },
+                '\u22ee\u22ee'),
               h('div', { className: 'dshv-floatGrip', onPointerDown: startResize }))
           : null)
     }

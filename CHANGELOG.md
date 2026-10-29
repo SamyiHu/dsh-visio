@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.18.2
+- The floating canvas window can be moved from a dedicated handle on its left edge, not
+  only by its title bar.
+- The bottom-right launcher is draggable; its position is remembered, and a drag no longer
+  toggles the window (only a click does).
+
+
 ## 1.18.1
 - Dragging a shape **snaps to the other shapes**: left/right/top/bottom edges and centre
   lines within 0.35in, with red dashed guide lines showing which line it locked onto.
