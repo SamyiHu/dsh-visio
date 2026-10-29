@@ -16,6 +16,9 @@
 - The drag axis follows the run (horizontal runs move up/down, vertical runs move sideways),
   which is why a sideways drag on a horizontal line used to do nothing.
 - Collinear points are dropped before the handles are built, so one run is one corner.
+- Dragging a connector end now shows a **drop preview**: a green dot marks the port it will
+  glue to, a dashed line joins it to the cursor, and the tooltip names the target shape.
+  Releasing with no target reports it instead of silently doing nothing.
 
 
 ## 1.20.0

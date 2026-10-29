@@ -49,6 +49,7 @@ window.__ModuleLoader__.load({
       route_right: '右侧',
       route_auto: '自动',
       linkTool: '连线工具',
+      needTarget: '没有对准任何形状，端点未移动',
       linkPickTarget: '已选起点 #{id}，再点目标形状完成连线',
       textBg: '文字背景遮挡',
       textBgHint: '打开后文本框带白底，会遮住下面的连线',
@@ -175,6 +176,7 @@ window.__ModuleLoader__.load({
       route_right: 'Right',
       route_auto: 'Auto',
       linkTool: 'Connect tool',
+      needTarget: 'Not aligned with any shape; the end was not moved',
       linkPickTarget: 'Start #{id} picked, now click the target shape',
       textBg: 'Opaque text background',
       textBgHint: 'Paints a white block behind the text so it hides lines underneath',
@@ -1341,6 +1343,7 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         const endHandle = event.target instanceof Element ? event.target.closest('[data-route-end]') : null
         if (endHandle) {
           event.preventDefault()
+          event.stopPropagation()
           const current = docRef.current
           const svgEl = event.currentTarget.querySelector('svg')
           if (!current || !svgEl) return
@@ -1351,37 +1354,88 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           const start = { x: event.clientX, y: event.clientY }
           const shapeId = endHandle.getAttribute('data-route-end')
           const which = endHandle.getAttribute('data-end')
-          const move = (e) => {
-            const tip = tipRef.current
-            if (!tip || !tip.parentElement) return
-            const host = tip.parentElement.getBoundingClientRect()
-            const x = ((e.clientX - box.left) / scale).toFixed(2)
-            const y = (vb.height - (e.clientY - box.top) / scale).toFixed(2)
-            tip.style.display = 'block'
-            tip.style.left = `${e.clientX - host.left + 14}px`
-            tip.style.top = `${e.clientY - host.top - 30}px`
-            tip.textContent = `${which === 'start' ? '起点' : '终点'} X ${x}  Y ${y}`
+
+          // four edge midpoints of a box, the ports a connector end may land on
+          const portsOf = (b) => ([
+            [b.x, b.y + b.h / 2],
+            [b.x + b.w, b.y + b.h / 2],
+            [b.x + b.w / 2, b.y],
+            [b.x + b.w / 2, b.y + b.h],
+          ])
+
+          const nearestPort = (wx, wy) => {
+            let best = null
+            for (const item of current.shapes) {
+              if (item.connector || !item.bbox) continue
+              for (const port of portsOf(item.bbox)) {
+                const d = (port[0] - wx) ** 2 + (port[1] - wy) ** 2
+                if (!best || d < best.d) best = { id: item.id, port, d }
+              }
+            }
+            return best
           }
+
+          const ghost = (id) => {
+            let g = svgEl.querySelector('#' + id)
+            if (!g) {
+              g = document.createElementNS('http://www.w3.org/2000/svg', 'g')
+              g.setAttribute('id', id)
+              g.setAttribute('pointer-events', 'none')
+              g.innerHTML = '<circle r="0.14" fill="#2FBF71" fill-opacity="0.9" stroke="#FFFFFF"'
+                + ' stroke-width="2" vector-effect="non-scaling-stroke"/>'
+                + '<line stroke="#2FBF71" stroke-width="1.5" stroke-dasharray="4 3"'
+                + ' vector-effect="non-scaling-stroke"/>'
+              svgEl.appendChild(g)
+            }
+            return g
+          }
+
+          const move = (e) => {
+            const wx = (e.clientX - box.left) / scale
+            const wy = vb.height - (e.clientY - box.top) / scale
+            const near = nearestPort(wx, wy)
+            const g = ghost('dshv-drop')
+            const circle = g.querySelector('circle')
+            const line = g.querySelector('line')
+            if (near) {
+              circle.setAttribute('cx', near.port[0])
+              circle.setAttribute('cy', vb.height - near.port[1])
+              line.setAttribute('x1', near.port[0])
+              line.setAttribute('y1', vb.height - near.port[1])
+              line.setAttribute('x2', wx)
+              line.setAttribute('y2', vb.height - wy)
+              g.style.display = ''
+            } else {
+              g.style.display = 'none'
+            }
+            const tip = tipRef.current
+            if (tip && tip.parentElement) {
+              const host = tip.parentElement.getBoundingClientRect()
+              tip.style.display = 'block'
+              tip.style.left = `${e.clientX - host.left + 14}px`
+              tip.style.top = `${e.clientY - host.top - 30}px`
+              tip.textContent = near
+                ? `${which === 'start' ? '起点' : '终点'} → #${near.id}`
+                : `${which === 'start' ? '起点' : '终点'} 未对准任何形状`
+            }
+          }
+
           const up = (e) => {
             window.removeEventListener('pointermove', move)
             window.removeEventListener('pointerup', up)
+            const drop = svgEl.querySelector('#dshv-drop')
+            if (drop) drop.remove()
             if (tipRef.current) tipRef.current.style.display = 'none'
             if (Math.abs(e.clientX - start.x) + Math.abs(e.clientY - start.y) < 3) return
             const wx = (e.clientX - box.left) / scale
             const wy = vb.height - (e.clientY - box.top) / scale
-            let bestId = null
-            let bestD = 1e9
-            for (const item of current.shapes) {
-              if (item.connector || !item.bbox) continue
-              const b = item.bbox
-              const cx = Math.min(Math.max(wx, b.x), b.x + b.w)
-              const cy = Math.min(Math.max(wy, b.y), b.y + b.h)
-              const d = (cx - wx) ** 2 + (cy - wy) ** 2
-              if (d < bestD) { bestD = d; bestId = item.id }
+            const near = nearestPort(wx, wy)
+            if (!near) {
+              setError(t('needTarget'))
+              return
             }
-            if (!bestId) return
             runOp({ action: 'reglue', path: current.path, page: current.page,
-              shape_id: shapeId, end: which, to: bestId, x: wx, y: wy })
+              shape_id: shapeId, end: which, to: near.id, x: near.port[0], y: near.port[1] })
           }
           window.addEventListener('pointermove', move)
           window.addEventListener('pointerup', up)
