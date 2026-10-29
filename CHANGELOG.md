@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.18.4
+- Fixed the reset and close buttons of the floating window: a pointerdown on the title bar
+  called `preventDefault()`, which swallowed the click that followed.
+- The title bar is kept below the app chrome (y >= 48), and the left move handle is now a
+  thin strip that appears on hover, so it no longer blocks the panel underneath.
+
+
 ## 1.18.3
 - The floating canvas can no longer be dragged under the app chrome: the title bar always
   stays reachable, and a geometry saved on a larger screen is clamped when it opens.

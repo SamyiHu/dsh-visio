@@ -10,7 +10,7 @@ window.__ModuleLoader__.load({
     const PANEL_ID = 'dsh-visio'
     const POLL_MS = 2500
     // Bumped with every release: the footer shows it, so a stale bundle is obvious.
-    const CLIENT_BUILD = '1.18.3'
+    const CLIENT_BUILD = '1.18.4'
 
     /* ------------------------------------------------------------- locale */
 
@@ -1783,10 +1783,12 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
 .dshv-floatBtns{display:flex;align-items:center;gap:2px}
 .dshv-floatBody{flex:1;min-height:0;overflow:hidden;display:flex}
 .dshv-floatBody > .dshv-root{flex:1;min-width:0;height:100%}
-.dshv-floatMove{position:absolute;left:6px;top:50%;transform:translateY(-50%);width:14px;height:44px;
-  display:flex;align-items:center;justify-content:center;flex-direction:column;gap:2px;font-size:9px;line-height:1;
-  color:var(--dsw-alias-label-secondary);opacity:.55;cursor:move;user-select:none;touch-action:none;border-radius:6px}
-.dshv-floatMove:hover{opacity:1;background:var(--dsw-alias-bg-layer-1)}
+.dshv-floatMove{position:absolute;left:0;top:50%;transform:translateY(-50%);width:6px;height:56px;
+  display:flex;align-items:center;justify-content:center;font-size:0;line-height:1;
+  color:var(--dsw-alias-label-secondary);opacity:0;cursor:move;user-select:none;touch-action:none;
+  border-radius:0 6px 6px 0;transition:opacity .12s ease}
+.dshv-float:hover .dshv-floatMove{opacity:.6}
+.dshv-floatMove:hover{opacity:1;background:var(--dsw-alias-brand-primary)}
 .dshv-floatGrip{position:absolute;right:0;bottom:0;width:18px;height:18px;cursor:nwse-resize;touch-action:none;
   background:linear-gradient(135deg, transparent 50%, var(--dsw-alias-border-l2) 50%)}
 .dshv-svgHost [data-shape-id]{cursor:move}
@@ -1877,6 +1879,9 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
       }
       const track = (event, build) => {
         if (event.button !== 0) return
+        // Buttons inside the bar keep their own click: preventDefault() on pointerdown
+        // would swallow the following click event.
+        if (event.target instanceof Element && event.target.closest('button')) return
         event.preventDefault()
         event.stopPropagation()
         const start = { x: event.clientX, y: event.clientY, geom: geomRef.current }
@@ -1910,8 +1915,8 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         return {
           w,
           h,
-          x: Math.min(Math.max(8, g.x), vw - Math.min(w, 220) - 8),
-          y: Math.min(Math.max(8, g.y), vh - 48),
+          x: Math.min(Math.max(8, g.x), Math.max(8, vw - Math.min(w, 220) - 8)),
+          y: Math.min(Math.max(48, g.y), vh - 56),
         }
       }
       const resetGeom = () => {
