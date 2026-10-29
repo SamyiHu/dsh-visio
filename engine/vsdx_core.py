@@ -838,14 +838,35 @@ class Vsdx:
                     clean = dedupe([(bx, by), (lane, by), (lane, ey), (ex, ey)])
         return self.set_route(shape_id, clean, page=page)
 
+    @staticmethod
+    def _simplify(points):
+        """Drop collinear and duplicate points so each run is a real corner."""
+        out = []
+        for pt in points:
+            if out and abs(pt[0] - out[-1][0]) < 1e-6 and abs(pt[1] - out[-1][1]) < 1e-6:
+                continue
+            out.append(pt)
+        if len(out) <= 2:
+            return out
+        keep = [out[0]]
+        for i in range(1, len(out) - 1):
+            ax, ay = keep[-1]
+            bx, by = out[i]
+            cx, cy = out[i + 1]
+            cross = (bx - ax) * (cy - by) - (by - ay) * (cx - bx)
+            if abs(cross) > 1e-6:
+                keep.append(out[i])
+        keep.append(out[-1])
+        return keep
+
     def drawn_points(self, shape_id, page: int = 1):
         """The polyline actually rendered for this connector (manual beats automatic)."""
         manual = self.geometry_points(shape_id, page)
         if len(manual) > 2:
-            return manual
+            return self._simplify(manual)
         routes, _issues = self.page_routes(page)
         if routes.get(str(shape_id)):
-            return routes[str(shape_id)]
+            return self._simplify(routes[str(shape_id)])
         return self._connector_points(shape_id, page)
 
     def move_segment(self, shape_id, index, delta, page: int = 1):

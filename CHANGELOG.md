@@ -11,6 +11,11 @@
   port instead of floating where the mouse was released.
 - Connector handles are larger with a screen-pixel outline, so they stay visible when zoomed
   out.
+- The whole connector is now grabbable: a wide invisible band follows the line, so dragging
+  the line itself works instead of only the small dots.
+- The drag axis follows the run (horizontal runs move up/down, vertical runs move sideways),
+  which is why a sideways drag on a horizontal line used to do nothing.
+- Collinear points are dropped before the handles are built, so one run is one corner.
 
 
 ## 1.20.0

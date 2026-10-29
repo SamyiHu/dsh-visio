@@ -589,6 +589,18 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           ? shape.points
           : [[shape.bbox.x, shape.bbox.y], [shape.bbox.x + shape.bbox.w, shape.bbox.y + shape.bbox.h]]
         let handles = ''
+        // a fat invisible band over the whole line: grabbing the line itself moves the
+        // whole run, which is what people try first
+        let band = ''
+        for (let i = 0; i < pts.length - 1; i += 1) {
+          const [ax, ay] = pts[i]
+          const [bx, by] = pts[i + 1]
+          band += '<line x1="' + ax + '" y1="' + (pageHeight - ay) + '" x2="' + bx + '" y2="' + (pageHeight - by) + '"'
+            + ' stroke="transparent" stroke-width="14" vector-effect="non-scaling-stroke"'
+            + ' data-route-band="' + shape.id + '" data-seg="' + i + '"'
+            + ' style="cursor:move" pointer-events="stroke"/>'
+        }
+        handles += band
         // the two ends: dragging one re-glues that end to the nearest shape
         for (const [tag, idx] of [['start', 0], ['end', pts.length - 1]]) {
           const [ex, ey] = pts[idx]
@@ -1375,7 +1387,8 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           window.addEventListener('pointerup', up)
           return
         }
-        const handle = event.target instanceof Element ? event.target.closest('[data-route-handle]') : null
+        const band = event.target instanceof Element ? event.target.closest('[data-route-band]') : null
+        const handle = band || (event.target instanceof Element ? event.target.closest('[data-route-handle]') : null)
         if (handle) {
           event.preventDefault()
           const current = docRef.current
@@ -1386,8 +1399,19 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           if (!vb || !box.width) return
           const scale = box.width / vb.width
           const start = { x: event.clientX, y: event.clientY }
-          const axis = handle.getAttribute('data-axis')
           const segIndex = Number(handle.getAttribute('data-seg') || 0)
+          let axis = handle.getAttribute('data-axis')
+          if (!axis) {
+            const item = (docRef.current && docRef.current.shapes || []).find((x) => x.id === handle.getAttribute('data-route-band'))
+            const pts0 = (item && item.points && item.points.length >= 2) ? item.points : null
+            if (pts0 && pts0[segIndex] && pts0[segIndex + 1]) {
+              const a = pts0[segIndex]
+              const b2 = pts0[segIndex + 1]
+              axis = Math.abs(b2[0] - a[0]) < Math.abs(b2[1] - a[1]) ? 'x' : 'y'
+            } else {
+              axis = 'y'
+            }
+          }
           const move = (e) => {
             const tip = tipRef.current
             if (!tip || !tip.parentElement) return
@@ -1405,7 +1429,11 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
             if (tipRef.current) tipRef.current.style.display = 'none'
             const dx = (e.clientX - start.x) / scale
             const dy = (e.clientY - start.y) / scale
-            const delta = axis === 'y' ? -dy : dx
+            // pick the axis the run itself can move on: horizontal runs slide vertically,
+            // vertical runs slide sideways.  Using the raw mouse axis made a horizontal
+            // line ignore a sideways drag, which felt like "nothing moves".
+            const vertical = axis === 'x'
+            const delta = vertical ? dx : -dy
             if (Math.abs(delta) < 0.02) return
             runOp({ action: 'move_segment', path: current.path, page: current.page,
               shape_id: handle.getAttribute('data-route-handle'), index: segIndex, delta })
