@@ -279,8 +279,8 @@ class Vsdx:
                 },
                 "geometry": [k for k in kinds if k],
                 "connector": is_connector,
-                "points": (self._connector_points(sh.get("ID"), page)
-                           if is_connector else []),
+                "points": ([] if getattr(self, "_no_points", False)
+                           else (self.drawn_points(sh.get("ID"), page) if is_connector else [])),
                 "connects": connects.get(sh.get("ID"), []),
                 "props": props,
             })
@@ -349,6 +349,7 @@ class Vsdx:
         return part, self._xml(part)
 
     def _write_page(self, part: str, root):
+        self._route_cache = None
         self.parts[part] = _tostring(root)
         self._xmlcache[part] = root
         self._dirty.add(part)
@@ -836,6 +837,16 @@ class Vsdx:
                     lane = max(bx, ex) + off
                     clean = dedupe([(bx, by), (lane, by), (lane, ey), (ex, ey)])
         return self.set_route(shape_id, clean, page=page)
+
+    def drawn_points(self, shape_id, page: int = 1):
+        """The polyline actually rendered for this connector (manual beats automatic)."""
+        manual = self.geometry_points(shape_id, page)
+        if len(manual) > 2:
+            return manual
+        routes, _issues = self.page_routes(page)
+        if routes.get(str(shape_id)):
+            return routes[str(shape_id)]
+        return self._connector_points(shape_id, page)
 
     def move_segment(self, shape_id, index, delta, page: int = 1):
         """Slide one run of a connector, Visio style.
@@ -1702,6 +1713,49 @@ class Vsdx:
         lines.append((current_index, "".join(current)))
         return [(txt, colors.get(str(ix))) for ix, txt in lines]
 
+    def _plain_shapes(self, page: int = 1):
+        """shapes() without the connector polylines, safe to call from the router."""
+        saved = getattr(self, "_no_points", False)
+        self._no_points = True
+        try:
+            return self.shapes(page)
+        finally:
+            self._no_points = saved
+
+    def page_routes(self, page: int = 1):
+        """Automatic connector routes for this page: {connector id: [(x, y), ...]}."""
+        cached = getattr(self, "_route_cache", None)
+        if cached is not None and cached[0] == page:
+            return cached[1], cached[2]
+        import route_grammar as _rg
+        # shapes() asks drawn_points() for connectors, which asks back for the routes:
+        # build the graph from a plain read instead of going through shapes().
+        plain = self._plain_shapes(page)
+        nodes, edges = {}, []
+        for sh in plain:
+            if sh["connector"] or sh.get("type") == "Guide":
+                continue
+            det = self.shape(sh["id"], page)
+            rows = []
+            for sec in det["sections"].get("Connection", []):
+                for row in sec["rows"]:
+                    c_ = row["cells"]
+                    rows.append((float(c_.get("X") or 0), float(c_.get("Y") or 0),
+                                 float(c_.get("DirX") or 0), float(c_.get("DirY") or 0)))
+            nodes[sh["id"]] = {"bbox": sh["bbox"], "conn": rows}
+        for sh in plain:
+            if not sh["connector"]:
+                continue
+            tos = [str(x["to"]) for x in (sh.get("connects") or [])]
+            if len(tos) == 2 and tos[0] in nodes and tos[1] in nodes and tos[0] != tos[1]:
+                edges.append({"id": sh["id"], "a": tos[0], "b": tos[1]})
+        try:
+            routes, issues, self.route_choice = _rg.layout(nodes, edges)
+        except Exception as exc:
+            routes, issues = {}, [{"code": "router-error", "message": str(exc)}]
+        self._route_cache = (page, routes, issues)
+        return routes, issues
+
     def to_svg(self, page: int = 1, show_ids: bool = False, interactive: bool = False,
                background: bool = True) -> str:
         meta = self.pages[page - 1]
@@ -1741,29 +1795,7 @@ class Vsdx:
                            '<path d="M 0 0 L 10 5 L 0 10 z" fill="%s"/></marker>' % (_c.lstrip("#"), _c))
             out.append("</defs>")
         by_id = {sh["id"]: sh for sh in shapes}
-        import route_grammar as _rg
-        nodes, edges = {}, []
-        for sh in shapes:
-            if sh["connector"] or sh.get("type") == "Guide":
-                continue
-            det = self.shape(sh["id"], page)
-            rows = []
-            for sec in det["sections"].get("Connection", []):
-                for row in sec["rows"]:
-                    c_ = row["cells"]
-                    rows.append((float(c_.get("X") or 0), float(c_.get("Y") or 0),
-                                 float(c_.get("DirX") or 0), float(c_.get("DirY") or 0)))
-            nodes[sh["id"]] = {"bbox": sh["bbox"], "conn": rows}
-        for sh in shapes:
-            if not sh["connector"]:
-                continue
-            tos = [str(x["to"]) for x in (sh.get("connects") or [])]
-            if len(tos) == 2 and tos[0] in nodes and tos[1] in nodes and tos[0] != tos[1]:
-                edges.append({"id": sh["id"], "a": tos[0], "b": tos[1]})
-        try:
-            page_routes, route_issues, self.route_choice = _rg.layout(nodes, edges)
-        except Exception as exc:
-            page_routes, route_issues = {}, [{"code": "router-error", "message": str(exc)}]
+        page_routes, route_issues = self.page_routes(page)
         self.route_issues = route_issues
         open_group = (lambda sid: '<g data-shape-id="%s">' % _esc(sid)) if interactive else (lambda sid: "<g>")
         for s in shapes:

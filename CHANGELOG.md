@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+- Connector handles were positioned from the stored Begin/End points while the picture drew
+  the automatic route, so they floated away from the line. The panel now receives the
+  polyline that is actually rendered.
+
+
 ## 1.20.0
 - **Fixed the segment handles never appearing**: they were appended after `</svg>`, so the
   browser never rendered them. That is why dragging a connector did nothing.
