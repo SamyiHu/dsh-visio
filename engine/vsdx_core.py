@@ -854,7 +854,9 @@ class Vsdx:
         The two end points never move; a straight connector is first split into a
         three-run detour so there is a corner to slide.
         """
-        pts = self._connector_points(shape_id, page)
+        # start from the polyline that is on screen, not the stored Begin/End pair:
+        # otherwise the first drag throws away the automatic route
+        pts = self.drawn_points(shape_id, page)
         if len(pts) < 2:
             raise VsdxError("connector %s has no geometry" % shape_id)
         i = int(index)

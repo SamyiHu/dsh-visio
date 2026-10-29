@@ -4,6 +4,8 @@
 - Connector handles were positioned from the stored Begin/End points while the picture drew
   the automatic route, so they floated away from the line. The panel now receives the
   polyline that is actually rendered.
+- Dragging a connector segment used the same two-point stub, so the first drag replaced the
+  automatic route with a two-point detour. It now starts from the drawn polyline.
 
 
 ## 1.20.0
