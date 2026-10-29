@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.18.1
+- Dragging a shape **snaps to the other shapes**: left/right/top/bottom edges and centre
+  lines within 0.35in, with red dashed guide lines showing which line it locked onto.
+- With nothing to align to, the move falls back to a 0.25in grid (`Alt` turns that off).
+
+
 ## 1.18.0
 - Guide arrows on the four sides of a selected shape. Clicking one **connects** to an
   aligned neighbour (`probe` finds it), or **duplicates** the shape in that direction and

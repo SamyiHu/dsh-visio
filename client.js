@@ -10,7 +10,7 @@ window.__ModuleLoader__.load({
     const PANEL_ID = 'dsh-visio'
     const POLL_MS = 2500
     // Bumped with every release: the footer shows it, so a stale bundle is obvious.
-    const CLIENT_BUILD = '1.18.0'
+    const CLIENT_BUILD = '1.18.1'
 
     /* ------------------------------------------------------------- locale */
 
@@ -1041,6 +1041,30 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
 
       const dragRef = useRef(null)
 
+      const SNAP = 0.35           // inches; about one grid cell at 100% zoom
+
+      const snapEdges = (bbox, shapes, id) => {
+        const xs = []
+        const ys = []
+        for (const other of shapes) {
+          if (other.id === id || other.connector || !other.bbox) continue
+          const o = other.bbox
+          xs.push(o.x, o.x + o.w, o.x + o.w / 2)
+          ys.push(o.y, o.y + o.h, o.y + o.h / 2)
+        }
+        return { xs, ys }
+      }
+
+      const nearest = (value, list) => {
+        let best = null
+        let dist = SNAP
+        for (const v of list) {
+          const d = Math.abs(v - value)
+          if (d <= dist) { best = v; dist = d }
+        }
+        return best
+      }
+
       const moveDrag = (event) => {
         const drag = dragRef.current
         if (!drag) return
@@ -1050,6 +1074,71 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         drag.moved = true
         drag.dx = dxPx / drag.scale
         drag.dy = dyPx / drag.scale
+        // alignment snapping: edges and centre lines of the other shapes win
+        if (!drag.isConn && drag.cands) {
+          const b = drag.bbox
+          const nx = b.x + drag.dx
+          const ny = b.y - drag.dy
+          const leftHit = nearest(nx, drag.cands.xs)
+          const rightHit = nearest(nx + b.w, drag.cands.xs)
+          const centreXHit = nearest(nx + b.w / 2, drag.cands.xs)
+          if (leftHit !== null) drag.dx = leftHit - b.x
+          else if (rightHit !== null) drag.dx = rightHit - b.w - b.x
+          else if (centreXHit !== null) drag.dx = centreXHit - b.w / 2 - b.x
+          const topHit = nearest(ny + b.h, drag.cands.ys)
+          const bottomHit = nearest(ny, drag.cands.ys)
+          const centreYHit = nearest(ny + b.h / 2, drag.cands.ys)
+          if (topHit !== null) drag.dy = b.y + b.h - topHit
+          else if (bottomHit !== null) drag.dy = b.y - bottomHit
+          else if (centreYHit !== null) drag.dy = b.y + b.h / 2 - centreYHit
+          drag.snapped = (leftHit !== null || rightHit !== null || centreXHit !== null
+            || topHit !== null || bottomHit !== null || centreYHit !== null)
+          drag.snapX = (leftHit !== null) ? leftHit : ((rightHit !== null) ? rightHit
+            : ((centreXHit !== null) ? centreXHit : null))
+          drag.snapY = (topHit !== null) ? topHit : ((bottomHit !== null) ? bottomHit
+            : ((centreYHit !== null) ? centreYHit : null))
+          // nothing aligned: fall back to the 0.25in grid, unless Alt is held
+          if (!event.altKey) {
+            if (drag.snapX === null) {
+              const gx = Math.round((b.x + drag.dx) * 4) / 4
+              if (Math.abs(gx - (b.x + drag.dx)) < 0.13) {
+                drag.dx = gx - b.x
+                drag.snapX = gx
+              }
+            }
+            if (drag.snapY === null) {
+              const gy = Math.round((b.y - drag.dy) * 4) / 4
+              if (Math.abs(gy - (b.y - drag.dy)) < 0.13) {
+                drag.dy = b.y - gy
+                drag.snapY = gy
+              }
+            }
+          }
+          const svgEl = drag.svg
+          if (svgEl) {
+            const H = drag.pageH || 0
+            const drawLine = (id, x1, y1, x2, y2) => {
+              let el = svgEl.querySelector('#' + id)
+              if (!el) {
+                el = document.createElementNS('http://www.w3.org/2000/svg', 'line')
+                el.setAttribute('id', id)
+                el.setAttribute('stroke', '#E5484D')
+                el.setAttribute('stroke-width', '1')
+                el.setAttribute('vector-effect', 'non-scaling-stroke')
+                el.setAttribute('stroke-dasharray', '4 3')
+                el.setAttribute('pointer-events', 'none')
+                svgEl.appendChild(el)
+              }
+              el.setAttribute('x1', x1.toFixed(4)); el.setAttribute('y1', y1.toFixed(4))
+              el.setAttribute('x2', x2.toFixed(4)); el.setAttribute('y2', y2.toFixed(4))
+              el.style.display = ''
+            }
+            if (drag.snapX !== null) drawLine('dshv-snap-x', drag.snapX, 0, drag.snapX, H)
+            else { const e = svgEl.querySelector('#dshv-snap-x'); if (e) e.style.display = 'none' }
+            if (drag.snapY !== null) drawLine('dshv-snap-y', 0, H - drag.snapY, drag.pageW, H - drag.snapY)
+            else { const e = svgEl.querySelector('#dshv-snap-y'); if (e) e.style.display = 'none' }
+          }
+        }
         const label = drag.isConn && drag.textNode
         if (label) {
           drag.textNode.setAttribute('transform',
@@ -1065,7 +1154,9 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           tip.style.display = 'block'
           tip.style.left = `${event.clientX - box.left + 14}px`
           tip.style.top = `${event.clientY - box.top - 30}px`
-          tip.textContent = `X ${(drag.bbox.x + drag.dx).toFixed(3)}   Y ${(drag.bbox.y - drag.dy).toFixed(3)}`
+          const tipX = (drag.bbox.x + drag.dx).toFixed(3)
+          const tipY = (drag.bbox.y - drag.dy).toFixed(3)
+          tip.textContent = `X ${tipX}   Y ${tipY}${drag.snapped ? '   [snap]' : ''}`
         }
       }
 
@@ -1077,6 +1168,13 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         window.removeEventListener('pointercancel', upDrag)
         window.removeEventListener('blur', upDrag)
         if (tipRef.current) tipRef.current.style.display = 'none'
+        const svgEl = drag && drag.svg
+        if (svgEl) {
+          for (const gid of ['dshv-snap-x', 'dshv-snap-y']) {
+            const el = svgEl.querySelector('#' + gid)
+            if (el) el.remove()
+          }
+        }
         if (!drag) return
         drag.node.style.opacity = ''
         if (!drag.moved) {
@@ -1174,6 +1272,10 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           base: matched ? { x: Number(matched[1]), y: Number(matched[2]) } : { x: 0, y: 0 },
           scale, dx: 0, dy: 0, moved: false,
           isConn: !!target.connector,
+          cands: target.connector ? null : snapEdges(target.bbox, current.shapes, id),
+          svg: svg,
+          pageH: current.pageSize ? current.pageSize.h : 0,
+          pageW: current.pageSize ? current.pageSize.w : 0,
           onText: event.target instanceof Element && event.target.tagName.toLowerCase() === 'text',
           textNode: event.target instanceof Element && event.target.tagName.toLowerCase() === 'text' ? event.target : null,
         }
