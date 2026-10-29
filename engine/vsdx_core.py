@@ -279,6 +279,8 @@ class Vsdx:
                 },
                 "geometry": [k for k in kinds if k],
                 "connector": is_connector,
+                "points": (self._connector_points(sh.get("ID"), page)
+                           if is_connector else []),
                 "connects": connects.get(sh.get("ID"), []),
                 "props": props,
             })
@@ -833,6 +835,67 @@ class Vsdx:
                 if folded:
                     lane = max(bx, ex) + off
                     clean = dedupe([(bx, by), (lane, by), (lane, ey), (ex, ey)])
+        return self.set_route(shape_id, clean, page=page)
+
+    def move_segment(self, shape_id, index, delta, page: int = 1):
+        """Slide one run of a connector, Visio style.
+
+        The two end points never move; a straight connector is first split into a
+        three-run detour so there is a corner to slide.
+        """
+        pts = self._connector_points(shape_id, page)
+        if len(pts) < 2:
+            raise VsdxError("connector %s has no geometry" % shape_id)
+        i = int(index)
+        if i < 0 or i >= len(pts) - 1:
+            raise VsdxError("segment %s does not exist" % index)
+
+        if len(pts) == 2:
+            ax, ay = pts[0]
+            bx, by = pts[1]
+            if abs(by - ay) <= abs(bx - ax):
+                # horizontal run: a vertical detour at the middle, then slide it up/down
+                mid = (ax + bx) / 2.0
+                pts = [(ax, ay), (mid, ay), (mid, by), (bx, by)]
+                i = 0
+            else:
+                # vertical run: a sideways detour, then slide it left/right
+                mid = (ay + by) / 2.0
+                pts = [(ax, ay), (ax + delta, ay), (ax + delta, by), (bx, by)]
+                i = 1
+                out = list(pts)
+                clean = [out[0]]
+                for pt in out[1:]:
+                    if abs(pt[0] - clean[-1][0]) > 1e-6 or abs(pt[1] - clean[-1][1]) > 1e-6:
+                        clean.append(pt)
+                return self.set_route(shape_id, clean, page=page)
+
+        ax, ay = pts[i]
+        bx, by = pts[i + 1]
+        horizontal = abs(by - ay) <= abs(bx - ax)
+        out = list(pts)
+        if horizontal:
+            out[i] = (ax, ay + delta)
+            out[i + 1] = (bx, by + delta)
+            if i > 0:                                # previous corner keeps its x
+                px, _py = out[i - 1]
+                out[i - 1] = (px, ay + delta)
+            if i + 2 < len(out):                     # next corner keeps its x
+                nx, _ny = out[i + 2]
+                out[i + 2] = (nx, by + delta)
+        else:
+            out[i] = (ax + delta, ay)
+            out[i + 1] = (bx + delta, by)
+            if i > 0:
+                _px, py = out[i - 1]
+                out[i - 1] = (ax + delta, py)
+            if i + 2 < len(out):
+                _nx, ny = out[i + 2]
+                out[i + 2] = (bx + delta, ny)
+        clean = [out[0]]
+        for pt in out[1:]:
+            if abs(pt[0] - clean[-1][0]) > 1e-6 or abs(pt[1] - clean[-1][1]) > 1e-6:
+                clean.append(pt)
         return self.set_route(shape_id, clean, page=page)
 
     def bend(self, shape_id, x, y, page: int = 1):

@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.19.1
+- Connector editing now works the way Visio does: every run of a selected connector gets a
+  handle at its middle, and dragging it slides that run (horizontal runs move up/down,
+  vertical runs move sideways). The two ends never move.
+- Dragging a straight connector for the first time splits it into a detour so there is a
+  corner to slide.
+- The up/down/left/right buttons are gone; they were an invention of mine, not Visio.
+
+
 ## 1.19.0
 - Connector routing can be edited by hand. Select a connector and the inspector shows a
   **走线** section: over / under / left / right, or auto. The polyline is written into the

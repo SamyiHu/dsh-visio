@@ -10,7 +10,7 @@ window.__ModuleLoader__.load({
     const PANEL_ID = 'dsh-visio'
     const POLL_MS = 2500
     // Bumped with every release: the footer shows it, so a stale bundle is obvious.
-    const CLIENT_BUILD = '1.19.0'
+    const CLIENT_BUILD = '1.19.1'
 
     /* ------------------------------------------------------------- locale */
 
@@ -42,7 +42,7 @@ window.__ModuleLoader__.load({
       outOfPage: '已超出页面范围',
       occlusion: '遮挡',
       route: '走线',
-      routeHint: '改完后仍可拖动线中点的蓝点继续微调',
+      routeHint: '拖动线上的蓝色手柄：横线上下移、竖线左右移，端点不动',
       route_up: '上方',
       route_down: '下方',
       route_left: '左侧',
@@ -166,7 +166,7 @@ window.__ModuleLoader__.load({
       outOfPage: 'Outside the page',
       occlusion: 'Occlusion',
       route: 'Routing',
-      routeHint: 'After this you can still drag the blue dot to fine-tune',
+      routeHint: 'Drag the blue handles: a horizontal run moves up/down, a vertical one moves sideways; the ends stay put',
       route_up: 'Over',
       route_down: 'Under',
       route_left: 'Left',
@@ -580,14 +580,24 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
       // Connector bounding boxes span their endpoints; a box around them would
       // cover half the page.  They get a stroke highlight instead (see CSS).
       if (svg && shape && shape.connector && shape.bbox) {
-        // a single grab handle on the line: dragging it bends the connector by hand
-        const cx = shape.bbox.x + shape.bbox.w / 2
-        const cy = shape.bbox.y + shape.bbox.h / 2
-        const handle = '<g data-route-handle="' + shape.id + '" style="cursor:move">'
-          + '<circle cx="' + cx + '" cy="' + (pageHeight - cy) + '" r="0.11"'
-          + ' fill="#2F6FBF" fill-opacity="0.9" stroke="#FFFFFF" stroke-width="1"'
-          + ' vector-effect="non-scaling-stroke"/></g>'
-        return svg + handle
+        // one handle per run, drawn at the run's middle: dragging it slides that run
+        const pts = (shape.points && shape.points.length >= 2)
+          ? shape.points
+          : [[shape.bbox.x, shape.bbox.y], [shape.bbox.x + shape.bbox.w, shape.bbox.y + shape.bbox.h]]
+        let handles = ''
+        for (let i = 0; i < pts.length - 1; i += 1) {
+          const [ax, ay] = pts[i]
+          const [bx, by] = pts[i + 1]
+          const mx = (ax + bx) / 2
+          const my = (ay + by) / 2
+          const vertical = Math.abs(bx - ax) < Math.abs(by - ay)
+          handles += '<g data-route-handle="' + shape.id + '" data-seg="' + i + '"'
+            + ' data-axis="' + (vertical ? 'x' : 'y') + '" style="cursor:' + (vertical ? 'ew-resize' : 'ns-resize') + '">'
+            + '<circle cx="' + mx + '" cy="' + (pageHeight - my) + '" r="0.10"'
+            + ' fill="#2F6FBF" fill-opacity="0.85" stroke="#FFFFFF" stroke-width="1"'
+            + ' vector-effect="non-scaling-stroke"/></g>'
+        }
+        return svg + handles
       }
       if (!svg || !shape || !shape.bbox || shape.connector) return svg
       const box = shape.bbox
@@ -1293,16 +1303,18 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           if (!vb || !box.width) return
           const scale = box.width / vb.width
           const start = { x: event.clientX, y: event.clientY }
-          const target = current.shapes.find((item) => item.id === handle.getAttribute('data-route-handle'))
+          const axis = handle.getAttribute('data-axis')
+          const segIndex = Number(handle.getAttribute('data-seg') || 0)
           const move = (e) => {
             const tip = tipRef.current
             if (!tip || !tip.parentElement) return
+            const dx = (e.clientX - start.x) / scale
+            const dy = (e.clientY - start.y) / scale
             const host = tip.parentElement.getBoundingClientRect()
             tip.style.display = 'block'
             tip.style.left = `${e.clientX - host.left + 14}px`
             tip.style.top = `${e.clientY - host.top - 30}px`
-            tip.textContent = `拐点 X ${(target.bbox.x + target.bbox.w / 2 + (e.clientX - start.x) / scale).toFixed(2)}`
-              + `  Y ${(target.bbox.y + target.bbox.h / 2 - (e.clientY - start.y) / scale).toFixed(2)}`
+            tip.textContent = axis === 'y' ? `竖直偏移 ${(-dy).toFixed(3)} in` : `水平偏移 ${dx.toFixed(3)} in`
           }
           const up = (e) => {
             window.removeEventListener('pointermove', move)
@@ -1310,11 +1322,10 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
             if (tipRef.current) tipRef.current.style.display = 'none'
             const dx = (e.clientX - start.x) / scale
             const dy = (e.clientY - start.y) / scale
-            if (Math.abs(dx) + Math.abs(dy) < 0.02) return
-            const bx = target.bbox.x + target.bbox.w / 2 + dx
-            const by = target.bbox.y + target.bbox.h / 2 - dy
-            runOp({ action: 'bend', path: current.path, page: current.page,
-              shape_id: target.id, x: bx, y: by })
+            const delta = axis === 'y' ? -dy : dx
+            if (Math.abs(delta) < 0.02) return
+            runOp({ action: 'move_segment', path: current.path, page: current.page,
+              shape_id: handle.getAttribute('data-route-handle'), index: segIndex, delta })
           }
           window.addEventListener('pointermove', move)
           window.addEventListener('pointerup', up)
@@ -1686,14 +1697,9 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         detail.type === 'Shape' && shape && shape.connector
           ? h('div', { className: 'dshv-section' },
               h('div', { className: 'dshv-sectionTitle' }, t('route')),
+              h('div', { className: 'dshv-hint' }, t('routeHint')),
               h('div', { className: 'dshv-routeRow' },
-                ['up', 'down', 'left', 'right'].map((style) =>
-                  h(Btn, {
-                    key: style, small: true, variant: 'ghost',
-                    onClick: () => onRouteStyle(style),
-                  }, t('route_' + style))),
-                h(Btn, { small: true, variant: 'ghost', onClick: () => onRouteStyle('auto') }, t('route_auto'))),
-              h('div', { className: 'dshv-hint' }, t('routeHint')))
+                h(Btn, { small: true, variant: 'ghost', onClick: () => onRouteStyle('auto') }, t('route_auto'))))
           : null,
 
         h('div', { className: 'dshv-section' },

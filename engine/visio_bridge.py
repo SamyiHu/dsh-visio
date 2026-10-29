@@ -825,6 +825,19 @@ def action_route_style(req):
     return build_state(path, page, sid, notice=notice, saved=True)
 
 
+def action_move_segment(req):
+    """Slide one segment of a connector (Visio-style segment drag)."""
+    path = drawing_path(req.get("path"))
+    doc = load_doc(path)
+    page = page_of(req.get("page"), doc.pages)
+    sid = text(req.get("shape_id"), "shape_id", 40)
+    index = int(number(req.get("index") or 0, "index"))
+    delta = number(req.get("delta"), "delta")
+    doc.move_segment(sid, index, delta, page=page)
+    save_doc(doc, req.get("backup", True))
+    return build_state(path, page, sid, notice="走线已调整", saved=True)
+
+
 ACTIONS = {
     "ping": action_ping,
     "list": action_list,
@@ -848,6 +861,7 @@ ACTIONS = {
     "connect": action_connect,
     "probe": action_probe,
     "bend": action_bend,
+    "move_segment": action_move_segment,
     "route_style": action_route_style,
     "set_route": action_set_route,
     "clear_route": action_clear_route,
