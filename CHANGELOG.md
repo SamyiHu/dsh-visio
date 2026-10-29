@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.17.0
+- Connectors are laid out from Visio's **connection points**: `Section N="Connection"`
+  rows when a shape defines them (X/Y plus the DirX/DirY normal), otherwise the four edge
+  midpoints a plain 2-D shape gets by default.
+- One connection point carries at most one connector (`anchor-shared`), a line leaves and
+  enters along the port normal (`dir-mismatch`), and a decision's branches spread over
+  different points, preferring the side opposite its entry (`branch-ports`).
+
+
 ## 1.16.3
 - Connectors are laid out from the **relationship graph**, not drawn straight from the
   stored cells: `engine/route_grammar.py` builds nodes/edges, gives every connector end its

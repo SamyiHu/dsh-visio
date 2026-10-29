@@ -1,106 +1,127 @@
-"""Relationship-driven connector layout.
+"""Relationship-driven connector layout, following Visio's glue model.
 
-The page is treated as a graph: shapes are nodes, connectors (their Connect rows)
-are edges.  Ports are assigned per node from its in/out degree, then every edge is
-routed as an orthogonal path.  A grammar check rejects any path that breaks the
-flowchart invariants, so a broken picture can never be produced silently:
+Nodes are shapes, edges are connectors (their `Connect` rows).  Every node exposes
+**connection points** the way Visio defines them:
 
-  * every segment is axis aligned;
-  * every end lands on the boundary of the node it belongs to;
-  * no segment passes through a shape that is not one of its two ends;
-  * no two connectors share a side of the same shape.
+  * `Section N="Connection"` rows - `X`, `Y` in shape-local inches, `DirX`/`DirY`
+    the outward normal (`0,0` meaning "free", which is pointed away from the centre);
+  * otherwise the four edge midpoints a plain 2-D shape gets by default
+    (left, bottom, right, top), normals pointing outwards.
 
-The four sides are exactly the four connection points a default 2-D shape gets in
-Visio (left, bottom, right, top edge midpoints, normals pointing outwards), so the
-rules above map one-to-one onto Visio's glue model:
+Rules enforced (violations are reported, never drawn silently):
 
-  R1  a connector leaves/enters perpendicular to the side it is glued to;
-  R2  one connection point carries at most one connector  (`port-shared`);
-  R3  segments stay horizontal or vertical                     (`not-orthogonal`);
-  R4  a connector never crosses an unrelated shape             (`crosses-shape`);
-  R5  branches of one shape spread over distinct points        (`decision-ports`).
-
-Shapes that declare their own `Section N="Connection"` rows are not read yet: their
-extra points would need `assign()` to consider per-point normals.  That is the next
-step, not something this module pretends to support.
+  R1  a connector leaves a point along its normal and enters along the opposite
+  R2  one connection point carries at most one connector            (`anchor-shared`)
+  R3  every segment is horizontal or vertical                       (`not-orthogonal`)
+  R4  a connector never crosses an unrelated shape                  (`crosses-shape`)
+  R5  a decision's branches spread over different points            (`branch-ports`)
 """
 
 EPS = 1e-6
+STUB = 0.22          # short straight run off the port, the way Visio leaves a shape
 
 
-# --------------------------------------------------------------------------- graph
-def build(shapes):
-    boxes = {s["id"]: s["bbox"] for s in shapes
-             if not s["connector"] and s["type"] != "Guide" and s["bbox"]["w"] > 0 and s["bbox"]["h"] > 0}
-    edges = []
-    for c in shapes:
-        if not c["connector"]:
-            continue
-        tos = [str(x["to"]) for x in (c.get("connects") or [])]
-        if len(tos) == 2 and tos[0] in boxes and tos[1] in boxes and tos[0] != tos[1]:
-            edges.append({"id": c["id"], "a": tos[0], "b": tos[1]})
-    return boxes, edges
+# --------------------------------------------------------------------------- points
+def _outward(box, x, y):
+    dx = x - (box["x"] + box["w"] / 2.0)
+    dy = y - (box["y"] + box["h"] / 2.0)
+    if abs(dx / (box["w"] / 2.0 or 1)) >= abs(dy / (box["h"] / 2.0 or 1)):
+        return (1.0, 0.0) if dx >= 0 else (-1.0, 0.0)
+    return (0.0, 1.0) if dy >= 0 else (0.0, -1.0)
 
 
-def _deg(edges):
-    inb, outb = {}, {}
-    for e in edges:
-        outb[e["a"]] = outb.get(e["a"], 0) + 1
-        inb[e["b"]] = inb.get(e["b"], 0) + 1
-    return inb, outb
+def anchors(node):
+    """[(x, y, nx, ny, key)] in page inches, normals pointing outwards."""
+    box = node["bbox"]
+    rows = node.get("conn") or []
+    if rows:
+        out = []
+        for i, (x, y, dx, dy) in enumerate(rows):
+            px, py = box["x"] + x, box["y"] + y
+            if dx == 0 and dy == 0:
+                dx, dy = _outward(box, px, py)
+            out.append((px, py, dx, dy, "c%d" % i))
+        return out
+    cx, cy = box["x"] + box["w"] / 2.0, box["y"] + box["h"] / 2.0
+    return [
+        (box["x"], cy, -1.0, 0.0, "L"),
+        (box["x"] + box["w"], cy, 1.0, 0.0, "R"),
+        (cx, box["y"], 0.0, -1.0, "B"),
+        (cx, box["y"] + box["h"], 0.0, 1.0, "T"),
+    ]
 
 
-# --------------------------------------------------------------------------- ports
-def port(box, side, frac=0.5):
-    x, y, w, h = box["x"], box["y"], box["w"], box["h"]
-    return {"L": (x, y + h * frac), "R": (x + w, y + h * frac),
-            "T": (x + w * frac, y + h), "B": (x + w * frac, y)}[side]
-
-
-def _facing(A, B):
+def _dir_to(A, B):
     acx, acy = A["x"] + A["w"] / 2.0, A["y"] + A["h"] / 2.0
     bcx, bcy = B["x"] + B["w"] / 2.0, B["y"] + B["h"] / 2.0
-    if abs(bcx - acx) >= abs(bcy - acy):
-        return ("R", "L") if bcx > acx else ("L", "R")
-    return ("T", "B") if bcy > acy else ("B", "T")
+    dx, dy = bcx - acx, bcy - acy
+    L = (dx * dx + dy * dy) ** 0.5 or 1.0
+    return dx / L, dy / L
 
 
-def assign(boxes, edges):
-    """Give every connector end its own side; decisions keep one side per branch."""
-    inb, outb = _deg(edges)
-    claimed = {n: set() for n in boxes}
-    sides = {}
-    # outputs first: a node with several branches must spread them over sides
-    for e in sorted(edges, key=lambda x: -outb.get(x["a"], 0)):
-        A, B = boxes[e["a"]], boxes[e["b"]]
-        sa = _pick(A, B, claimed[e["a"]])
-        sb = _pick(B, A, claimed[e["b"]])
-        claimed[e["a"]].add(sa)
-        claimed[e["b"]].add(sb)
-        sides[e["id"]] = (sa, sb)
-    return sides
+OPP = {"L": "R", "R": "L", "T": "B", "B": "T"}
 
 
-def _pick(A, B, taken):
-    first, _ = _facing(A, B)
-    for side in [first] + [s for s in ("R", "B", "L", "T") if s != first]:
-        if side not in taken:
-            return side
-    return first
+def _ideal(node, other):
+    dx, dy = _dir_to(node["bbox"], other["bbox"])
+    best, best_score = None, -9e9
+    for pt in anchors(node):
+        score = pt[2] * dx + pt[3] * dy
+        if score > best_score:
+            best, best_score = pt, score
+    return best, best_score
 
 
-# --------------------------------------------------------------------------- geometry
-def _crosses(path, boxes, skip):
-    for i in range(len(path) - 1):
-        (x1, y1), (x2, y2) = path[i], path[i + 1]
-        for sid, b in boxes.items():
-            if sid in skip:
-                continue
-            if _seg_hits(x1, y1, x2, y2, b):
-                return True
-    return False
+def assign(nodes, edges):
+    """One distinct point per connector end.
+
+    Pass 1 - every end takes the side that faces its partner (the natural trunk).
+    Pass 2 - ends that lost a contested side move to the best free one; a branch of a
+    node that already has an entry prefers the side opposite that entry, so a
+    decision's reject path leaves on the far side instead of doubling back.
+    """
+    want = {}
+    groups = {}
+    for e in edges:
+        for end, node, other in (("a", e["a"], e["b"]), ("b", e["b"], e["a"])):
+            pt, score = _ideal(nodes[node], nodes[other])
+            want[(e["id"], end)] = (node, pt, score)
+            groups.setdefault(node, []).append((e["id"], end, pt, score))
+
+    choice, lost = {}, []
+    for node, items in groups.items():
+        seen = {}
+        for eid, end, pt, score in sorted(items, key=lambda it: -it[3]):
+            if pt[4] not in seen:
+                seen[pt[4]] = (eid, end)
+                choice[(eid, end)] = pt
+            else:
+                lost.append((eid, end, node, pt))
+    # ends that could not have their ideal side
+    out_deg = {}
+    for e in edges:
+        out_deg[e["a"]] = out_deg.get(e["a"], 0) + 1
+    for eid, end, node, pt in sorted(lost, key=lambda it: -out_deg.get(it[2], 0)):
+        taken = {v[4] for (n, v) in choice.items() if n[0] == node} if False else                 {pt2[4] for (e2, d2), pt2 in choice.items() if want.get((e2, d2), (None,))[0] == node}
+        entry = None
+        for (e2, d2), pt2 in choice.items():
+            if d2 == "b" and want.get((e2, d2), (None,))[0] == node:
+                entry = pt2[4]
+                break
+        order = []
+        if end == "a" and entry:
+            order.append(OPP.get(entry))
+        order += [k for k in ("R", "B", "L", "T")]
+        for key in order:
+            if key and key not in taken:
+                choice[(eid, end)] = next(x for x in anchors(nodes[node]) if x[4] == key)
+                break
+        else:
+            choice[(eid, end)] = pt
+    return choice
 
 
+# --------------------------------------------------------------------------- routing
 def _seg_hits(x1, y1, x2, y2, b, pad=0.02, steps=32):
     bx1, by1 = b["x"] + pad, b["y"] + pad
     bx2, by2 = b["x"] + b["w"] - pad, b["y"] + b["h"] - pad
@@ -114,96 +135,120 @@ def _seg_hits(x1, y1, x2, y2, b, pad=0.02, steps=32):
     return False
 
 
-def _candidates(p1, p2, s1, s2, boxes, skip):
-    """Orthogonal paths, closest-to-straight first, then detours around obstacles."""
-    ax, ay = p1
-    bx, by = p2
-    ah, bh = s1 in ("L", "R"), s2 in ("L", "R")
-    out = []
-    if ah and bh:
-        for mid in ((ax + bx) / 2.0, ax + 0.35 if s1 == "R" else ax - 0.35,
-                    bx + 0.35 if s2 == "R" else bx - 0.35,
-                    max(ax, bx) + 0.35, min(ax, bx) - 0.35):
-            out.append([(ax, ay), (mid, ay), (mid, by), (bx, by)])
-    elif (not ah) and (not bh):
-        for mid in ((ay + by) / 2.0, ay + 0.35 if s1 == "T" else ay - 0.35,
-                    by + 0.35 if s2 == "T" else by - 0.35,
-                    max(ay, by) + 0.35, min(ay, by) - 0.35):
-            out.append([(ax, ay), (ax, mid), (bx, mid), (bx, by)])
-    elif ah:
-        out.append([(ax, ay), (bx, ay), (bx, by)])
-        for drop in (0.35, -0.35, 0.7, -0.7):
-            out.append([(ax, ay), (ax, ay + drop) if False else (bx, ay),
-                        (bx, ay), (bx, by)])
-    else:
-        out.append([(ax, ay), (ax, by), (bx, by)])
-    # last resort: go around the outside of everything
-    lo_x = min(b["x"] for b in boxes.values()) - 0.4
-    hi_x = max(b["x"] + b["w"] for b in boxes.values()) + 0.4
-    lo_y = min(b["y"] for b in boxes.values()) - 0.4
-    hi_y = max(b["y"] + b["h"] for b in boxes.values()) + 0.4
-    out.append([(ax, ay), (ax, hi_y), (bx, hi_y), (bx, by)])
-    out.append([(ax, ay), (ax, lo_y), (bx, lo_y), (bx, by)])
-    out.append([(ax, ay), (hi_x, ay), (hi_x, by), (bx, by)])
-    out.append([(ax, ay), (lo_x, ay), (lo_x, by), (bx, by)])
+def _crosses(path, boxes, skip):
+    for i in range(len(path) - 1):
+        (x1, y1), (x2, y2) = path[i], path[i + 1]
+        for sid, b in boxes.items():
+            if sid in skip:
+                continue
+            if _seg_hits(x1, y1, x2, y2, b):
+                return True
+    return False
+
+
+def _clean(path):
+    out = [path[0]]
+    for pt in path[1:]:
+        if abs(pt[0] - out[-1][0]) > 1e-6 or abs(pt[1] - out[-1][1]) > 1e-6:
+            out.append(pt)
     return out
 
 
-def route(boxes, edges, sides):
+def _join(a, n1, b, n2, shift=0.0):
+    """Orthogonal path between two stub ends, honouring exit and entry axes."""
+    ax, ay = a
+    bx, by = b
+    h1 = abs(n1[0]) >= abs(n1[1])
+    h2 = abs(n2[0]) >= abs(n2[1])
+    if h1 and h2:
+        mid = (ax + bx) / 2.0 + shift
+        return [(ax, ay), (mid, ay), (mid, by), (bx, by)]
+    if not h1 and not h2:
+        mid = (ay + by) / 2.0 + shift
+        return [(ax, ay), (ax, mid), (bx, mid), (bx, by)]
+    if h1:
+        return [(ax, ay), (bx, ay), (bx, by)]
+    return [(ax, ay), (ax, by), (bx, by)]
+
+
+def route(nodes, edges, choice):
+    boxes = {nid: nodes[nid]["bbox"] for nid in nodes}
     routes, bad = {}, []
     for e in edges:
-        sa, sb = sides[e["id"]]
-        A, B = boxes[e["a"]], boxes[e["b"]]
-        p1, p2 = port(A, sa), port(B, sb)
+        pa, pb = choice[(e["id"], "a")], choice[(e["id"], "b")]
+        p1, n1 = (pa[0], pa[1]), (pa[2], pa[3])
+        p2, n2 = (pb[0], pb[1]), (pb[2], pb[3])
         skip = {e["a"], e["b"]}
-        chosen = None
-        for path in _candidates(p1, p2, sa, sb, boxes, skip):
-            if not _crosses(path, boxes, skip):
-                chosen = path
+        best, blocked = None, True
+        for stub in (STUB, STUB * 2, STUB * 3, STUB * 5):
+            a = (p1[0] + n1[0] * stub, p1[1] + n1[1] * stub)
+            b = (p2[0] + n2[0] * stub, p2[1] + n2[1] * stub)
+            for shift in (0.0, 0.3, -0.3, 0.6, -0.6, 1.0, -1.0):
+                path = _clean([p1, a] + _join(a, n1, b, n2, shift)[1:-1] + [b, p2])
+                if not _crosses(path, boxes, skip):
+                    best, blocked = path, False
+                    break
+                if best is None:
+                    best = path
+            if not blocked:
                 break
-        if chosen is None:
-            chosen = _candidates(p1, p2, sa, sb, boxes, skip)[0]
+        if best is None:
+            best = _clean([p1, p2])
+        if blocked:
             bad.append({"connector": e["id"], "code": "route-blocked",
                         "message": "找不到不穿框的走线"})
-        routes[e["id"]] = chosen
+        routes[e["id"]] = best
     return routes, bad
 
 
 # --------------------------------------------------------------------------- grammar
-def check(boxes, edges, sides, routes):
-    """Invariants that make the drawing a flowchart rather than a pile of lines."""
+def check(nodes, edges, choice, routes):
     issues = []
+    boxes = {k: nodes[k]["bbox"] for k in nodes}
     used = {}
     for e in edges:
-        sa, sb = sides[e["id"]]
-        for node, side in ((e["a"], sa), (e["b"], sb)):
-            key = (node, side)
+        for end in ("a", "b"):
+            pt = choice[(e["id"], end)]
+            key = (e[end], pt[4])
             if key in used:
-                issues.append({"connector": e["id"], "code": "port-shared",
-                               "message": "形状 #%s 的 %s 边被 #%s 和 #%s 共用" % (node, side, used[key], e["id"])})
+                issues.append({"connector": e["id"], "code": "anchor-shared",
+                               "message": "形状 #%s 的连接点 %s 被 #%s 和 #%s 共用"
+                                          % (e[end], pt[4], used[key], e["id"])})
             used[key] = e["id"]
         path = routes.get(e["id"]) or []
         for i in range(len(path) - 1):
             (x1, y1), (x2, y2) = path[i], path[i + 1]
-            if abs(x1 - x2) > EPS and abs(y1 - y2) > EPS:
+            if abs(x1 - x2) > 1e-4 and abs(y1 - y2) > 1e-4:
                 issues.append({"connector": e["id"], "code": "not-orthogonal",
                                "message": "线段不是水平/垂直"})
-        if path and _crosses(path, boxes, {e["a"], e["b"]}):
+        if len(path) > 1 and _crosses(path, boxes, {e["a"], e["b"]}):
             issues.append({"connector": e["id"], "code": "crosses-shape",
                            "message": "连线穿过无关形状"})
-    inb, outb = _deg(edges)
-    for node, n_out in outb.items():
-        if n_out >= 2:
-            sides_used = {sides[e["id"]][0] for e in edges if e["a"] == node}
-            if len(sides_used) < min(n_out, 3):
-                issues.append({"connector": None, "code": "decision-ports",
-                               "message": "形状 #%s 有 %d 条出线，但只用了 %d 个不同的边" % (node, n_out, len(sides_used))})
+        for pt, seg, node, sign in (
+                (choice[(e["id"], "a")], (path[0], path[1]) if len(path) > 1 else None, e["a"], 1),
+                (choice[(e["id"], "b")], (path[-2], path[-1]) if len(path) > 1 else None, e["b"], -1)):
+            if not seg or (pt[2] == 0 and pt[3] == 0):
+                continue
+            vx, vy = seg[1][0] - seg[0][0], seg[1][1] - seg[0][1]
+            if (vx * pt[2] + vy * pt[3]) * sign <= 0:
+                issues.append({"connector": e["id"], "code": "dir-mismatch",
+                               "message": "形状 #%s 连接点 %s 处的线没有沿法线引出/进入" % (node, pt[4])})
+    outs = {}
+    for e in edges:
+        outs.setdefault(e["a"], []).append(e["id"])
+    for node, ids in outs.items():
+        if len(ids) >= 2:
+            keys = {choice[(i, "a")][4] for i in ids}
+            if len(keys) < len(ids):
+                issues.append({"connector": None, "code": "branch-ports",
+                               "message": "形状 #%s 有 %d 条出线，只用到 %d 个连接点"
+                                          % (node, len(ids), len(keys))})
     return issues
 
 
-def layout(shapes):
-    boxes, edges = build(shapes)
-    sides = assign(boxes, edges)
-    routes, bad = route(boxes, edges, sides)
-    issues = check(boxes, edges, sides, routes)
-    return routes, issues + bad, sides
+def layout(nodes, edges):
+    if not nodes or not edges:
+        return {}, [], {}
+    choice = assign(nodes, edges)
+    routes, bad = route(nodes, edges, choice)
+    return routes, check(nodes, edges, choice, routes) + bad, choice

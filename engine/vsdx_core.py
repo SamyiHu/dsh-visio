@@ -1408,10 +1408,28 @@ class Vsdx:
             out.append("</defs>")
         by_id = {sh["id"]: sh for sh in shapes}
         import route_grammar as _rg
+        nodes, edges = {}, []
+        for sh in shapes:
+            if sh["connector"] or sh.get("type") == "Guide":
+                continue
+            det = self.shape(sh["id"], page)
+            rows = []
+            for sec in det["sections"].get("Connection", []):
+                for row in sec["rows"]:
+                    c_ = row["cells"]
+                    rows.append((float(c_.get("X") or 0), float(c_.get("Y") or 0),
+                                 float(c_.get("DirX") or 0), float(c_.get("DirY") or 0)))
+            nodes[sh["id"]] = {"bbox": sh["bbox"], "conn": rows}
+        for sh in shapes:
+            if not sh["connector"]:
+                continue
+            tos = [str(x["to"]) for x in (sh.get("connects") or [])]
+            if len(tos) == 2 and tos[0] in nodes and tos[1] in nodes and tos[0] != tos[1]:
+                edges.append({"id": sh["id"], "a": tos[0], "b": tos[1]})
         try:
-            page_routes, route_issues, _ = _rg.layout(shapes)
-        except Exception:
-            page_routes, route_issues = {}, []
+            page_routes, route_issues, self.route_choice = _rg.layout(nodes, edges)
+        except Exception as exc:
+            page_routes, route_issues = {}, [{"code": "router-error", "message": str(exc)}]
         self.route_issues = route_issues
         open_group = (lambda sid: '<g data-shape-id="%s">' % _esc(sid)) if interactive else (lambda sid: "<g>")
         for s in shapes:
