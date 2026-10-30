@@ -1148,7 +1148,7 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
       const snapEdges = (bbox, shapes, id) => {
         const xs = []
         const ys = []
-        for (const other of shapes) {
+        for (const other of (shapes || [])) {
           if (other.id === id || other.connector || !other.bbox) continue
           const o = other.bbox
           xs.push(o.x, o.x + o.w, o.x + o.w / 2)
@@ -1165,6 +1165,30 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           if (d <= dist) { best = v; dist = d }
         }
         return best
+      }
+
+      /** Dashed guide line inside the page svg: the visible half of snapping. */
+      const guideLine = (svgEl, id, x1, y1, x2, y2, color) => {
+        if (!svgEl) return
+        let el = svgEl.querySelector('#' + id)
+        if (!el) {
+          el = document.createElementNS('http://www.w3.org/2000/svg', 'line')
+          el.setAttribute('id', id)
+          el.setAttribute('stroke-width', '1')
+          el.setAttribute('vector-effect', 'non-scaling-stroke')
+          el.setAttribute('stroke-dasharray', '4 3')
+          el.setAttribute('pointer-events', 'none')
+          svgEl.appendChild(el)
+        }
+        el.setAttribute('stroke', color || '#E5484D')
+        el.setAttribute('x1', Number(x1).toFixed(4)); el.setAttribute('y1', Number(y1).toFixed(4))
+        el.setAttribute('x2', Number(x2).toFixed(4)); el.setAttribute('y2', Number(y2).toFixed(4))
+        el.style.display = ''
+      }
+
+      const hideGuide = (svgEl, id) => {
+        const el = svgEl && svgEl.querySelector('#' + id)
+        if (el) el.style.display = 'none'
       }
 
       const moveDrag = (event) => {
@@ -1219,26 +1243,10 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           const svgEl = drag.svg
           if (svgEl) {
             const H = drag.pageH || 0
-            const drawLine = (id, x1, y1, x2, y2) => {
-              let el = svgEl.querySelector('#' + id)
-              if (!el) {
-                el = document.createElementNS('http://www.w3.org/2000/svg', 'line')
-                el.setAttribute('id', id)
-                el.setAttribute('stroke', '#E5484D')
-                el.setAttribute('stroke-width', '1')
-                el.setAttribute('vector-effect', 'non-scaling-stroke')
-                el.setAttribute('stroke-dasharray', '4 3')
-                el.setAttribute('pointer-events', 'none')
-                svgEl.appendChild(el)
-              }
-              el.setAttribute('x1', x1.toFixed(4)); el.setAttribute('y1', y1.toFixed(4))
-              el.setAttribute('x2', x2.toFixed(4)); el.setAttribute('y2', y2.toFixed(4))
-              el.style.display = ''
-            }
-            if (drag.snapX !== null) drawLine('dshv-snap-x', drag.snapX, 0, drag.snapX, H)
-            else { const e = svgEl.querySelector('#dshv-snap-x'); if (e) e.style.display = 'none' }
-            if (drag.snapY !== null) drawLine('dshv-snap-y', 0, H - drag.snapY, drag.pageW, H - drag.snapY)
-            else { const e = svgEl.querySelector('#dshv-snap-y'); if (e) e.style.display = 'none' }
+            if (drag.snapX !== null) guideLine(svgEl, 'dshv-snap-x', drag.snapX, 0, drag.snapX, H)
+            else hideGuide(svgEl, 'dshv-snap-x')
+            if (drag.snapY !== null) guideLine(svgEl, 'dshv-snap-y', 0, H - drag.snapY, drag.pageW, H - drag.snapY)
+            else hideGuide(svgEl, 'dshv-snap-y')
           }
         }
         const label = drag.isConn && drag.textNode
@@ -1363,19 +1371,26 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           const shapeId = endHandle.getAttribute('data-route-end')
           const which = endHandle.getAttribute('data-end')
 
-          // four edge midpoints of a box, the ports a connector end may land on
-          const portsOf = (b) => ([
-            [b.x, b.y + b.h / 2],
-            [b.x + b.w, b.y + b.h / 2],
-            [b.x + b.w / 2, b.y],
-            [b.x + b.w / 2, b.y + b.h],
-          ])
+          // The engine ships the real Connection points of every shape.  Guessing
+          // four bbox midpoints here made the green drop marker sit somewhere other
+          // than where the end actually landed on shapes with their own ports.
+          const portsOf = (item) => {
+            if (item && item.ports && item.ports.length) return item.ports
+            const b = item && item.bbox
+            if (!b) return []
+            return [
+              [b.x, b.y + b.h / 2],
+              [b.x + b.w, b.y + b.h / 2],
+              [b.x + b.w / 2, b.y],
+              [b.x + b.w / 2, b.y + b.h],
+            ]
+          }
 
           const nearestPort = (wx, wy) => {
             let best = null
             for (const item of current.shapes) {
               if (item.connector || !item.bbox) continue
-              for (const port of portsOf(item.bbox)) {
+              for (const port of portsOf(item)) {
                 const d = (port[0] - wx) ** 2 + (port[1] - wy) ** 2
                 if (!best || d < best.d) best = { id: item.id, port, d }
               }
@@ -1398,16 +1413,18 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
             return g
           }
 
-          // The viewBox starts at (vb.x, vb.y), not at the origin: the engine pads it
-          // by 0.25in so shapes that spill past the page stay visible.  Mapping the
-          // pointer without that offset shifted every drop by the padding, so an end
-          // dragged onto a shape landed on a neighbour's port instead.
+          // Svg user space *is* sheet space with y flipped: the renderer emits
+          // (x, pageH - y) for every point, and the viewBox only says which slice
+          // of that space is on screen.  Mixing the viewBox origin into this was
+          // what made the green drop marker sit 0.25in away from the port it named,
+          // so the line never landed where the marker promised.
+          const pageH = (current.pageSize && current.pageSize.h) || vb.height
           const toSheet = (clientX, clientY) => ({
             x: vb.x + (clientX - box.left) / scale,
-            y: vb.y + vb.height - (clientY - box.top) / scale,
+            y: pageH - vb.y - (clientY - box.top) / scale,
           })
-          const toViewX = (x) => x - vb.x
-          const toViewY = (y) => vb.y + vb.height - y
+          const toViewX = (x) => x
+          const toViewY = (y) => pageH - y
 
           const move = (e) => {
             const world = toSheet(e.clientX, e.clientY)
@@ -1435,7 +1452,7 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
               tip.style.left = `${e.clientX - host.left + 14}px`
               tip.style.top = `${e.clientY - host.top - 30}px`
               tip.textContent = near
-                ? `${which === 'start' ? '起点' : '终点'} → #${near.id}`
+                ? `${which === 'start' ? '起点' : '终点'} → #${near.id} (${near.port[0].toFixed(2)}, ${near.port[1].toFixed(2)})`
                 : `${which === 'start' ? '起点' : '终点'} 未对准任何形状`
             }
           }
@@ -1490,28 +1507,64 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
               axis = 'y'
             }
           }
+          // Alignment assistance for the run being slid: a connector should line up
+          // with the edges and centre lines of the shapes around it, exactly like a
+          // dragged shape does.  Candidates are the same edges snapEdges collects.
+          const item = (current.shapes || []).find((x) => x.id === shapeId)
+          const pts0 = (item && item.points && item.points.length >= 2) ? item.points : []
+          const seg0 = pts0[segIndex] && pts0[segIndex + 1]
+            ? { a: pts0[segIndex], b: pts0[segIndex + 1] } : null
+          const cands = snapEdges(item ? item.bbox : null, current.shapes, shapeId)
+          const H = current.pageSize ? current.pageSize.h : 0
+          const vertical = axis === 'x'
+          // The run moves along one axis: horizontal runs slide up/down (their y
+          // changes), vertical runs slide sideways (their x changes).
+          const baseAt = vertical ? (seg0 ? seg0.a[0] : 0) : (seg0 ? seg0.a[1] : 0)
+          let snapped = null
+          const snapRun = (raw) => {
+            snapped = null
+            const want = baseAt + raw
+            const hit = nearest(want, vertical ? cands.xs : cands.ys)
+            if (hit === null) return raw
+            snapped = hit
+            return hit - baseAt
+          }
+          const drawSnap = (value) => {
+            hideGuide(svgEl, 'dshv-conn-snap')
+            if (value === null || !seg0) return
+            if (vertical) {
+              guideLine(svgEl, 'dshv-conn-snap', value, 0, value, H, '#2F6FBF')
+            } else {
+              guideLine(svgEl, 'dshv-conn-snap', 0, H - value, current.pageSize.w, H - value, '#2F6FBF')
+            }
+          }
           const move = (e) => {
-            const tip = tipRef.current
-            if (!tip || !tip.parentElement) return
             const dx = (e.clientX - start.x) / scale
             const dy = (e.clientY - start.y) / scale
+            const raw = vertical ? dx : -dy
+            const value = e.altKey ? raw : snapRun(raw)
+            drawSnap(e.altKey ? null : snapped)
+            const tip = tipRef.current
+            if (!tip || !tip.parentElement) return
             const host = tip.parentElement.getBoundingClientRect()
             tip.style.display = 'block'
             tip.style.left = `${e.clientX - host.left + 14}px`
             tip.style.top = `${e.clientY - host.top - 30}px`
-            tip.textContent = axis === 'y' ? `竖直偏移 ${(-dy).toFixed(3)} in` : `水平偏移 ${dx.toFixed(3)} in`
+            const label = axis === 'y' ? `竖直偏移 ${(-dy).toFixed(3)} in` : `水平偏移 ${dx.toFixed(3)} in`
+            tip.textContent = (e.altKey ? label : (snapped !== null ? `${label}   [对齐]` : label))
           }
           const up = (e) => {
             window.removeEventListener('pointermove', move)
             window.removeEventListener('pointerup', up)
             if (tipRef.current) tipRef.current.style.display = 'none'
+            hideGuide(svgEl, 'dshv-conn-snap')
             const dx = (e.clientX - start.x) / scale
             const dy = (e.clientY - start.y) / scale
             // pick the axis the run itself can move on: horizontal runs slide vertically,
             // vertical runs slide sideways.  Using the raw mouse axis made a horizontal
             // line ignore a sideways drag, which felt like "nothing moves".
-            const vertical = axis === 'x'
-            const delta = vertical ? dx : -dy
+            const raw = vertical ? dx : -dy
+            const delta = e.altKey ? raw : snapRun(raw)
             if (Math.abs(delta) < 0.02) return
             runOp({ action: 'move_segment', path: current.path, page: current.page,
               shape_id: shapeId, index: segIndex, delta })

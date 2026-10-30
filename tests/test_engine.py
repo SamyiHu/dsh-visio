@@ -27,7 +27,7 @@ sys.path.insert(0, ENGINE)
 
 import blank_doc  # noqa: E402
 import visio_bridge  # noqa: E402
-from vsdx_core import Vsdx, _v  # noqa: E402
+from vsdx_core import Vsdx, VsdxError, _v  # noqa: E402
 
 
 def run_bridge(payload: dict):
@@ -740,6 +740,120 @@ class ConnectorEditTests(unittest.TestCase):
         # a two-point run is returned untouched, whatever its direction
         self.assertEqual(simplify([(0, 0), (3, 4)]), [(0, 0), (3, 4)])
         self.assertEqual(simplify([(0, 0), (1, 1)]), [(0, 0), (1, 1)])
+
+    def test_simplify_collapses_a_router_micro_step(self):
+        """A 0.017in step is invisible in the file but reads as a kink on screen."""
+        simplify = Vsdx._simplify
+        raw = [(4.95, 5.05), (5.899, 5.05), (5.899, 6.173), (7.083, 6.173),
+               (7.083, 3.947), (7.1, 3.947), (7.1, 3.25)]
+        out = simplify(raw)
+        self.assertEqual(len(out), 5, "the micro step survived: %r" % (out,))
+        self.assertEqual(out[0], raw[0], "the start point moved")
+        self.assertEqual(out[-1], raw[-1], "the end point moved")
+        # the two runs that carried the step are now one straight vertical run
+        self.assertAlmostEqual(out[3][0], out[4][0], places=6,
+                               msg="the vertical run still has a step: %r" % (out,))
+        self.assertEqual(out[3][0], 7.1, "the step did not snap to the glued end")
+        self.assertTrue(_axis_aligned(out), "not axis aligned: %r" % (out,))
+        # a step that a person could have drawn on purpose is kept
+        real = [(0, 0), (1, 0), (1, 0.05), (2, 0.05), (2, 0.2)]
+        self.assertEqual(len(simplify(real)), len(real),
+                         "a 0.05in corner was swallowed: %r" % (simplify(real),))
+
+    # ------------------------------------------------ degenerate connectors
+    def test_set_route_rejects_a_zero_length_connector(self):
+        """A zero-length line renders as a bare arrow head floating in mid-air."""
+        path = self._new("zero.vsdx")
+        a, b, link = self._two_boxes(path, by=3.5)
+        doc = Vsdx(path)
+        with self.assertRaises(VsdxError):
+            doc.set_route(link, [(2.0, 4.0), (2.0, 4.0)], page=1)
+
+    def test_degenerate_connector_is_marked_not_drawn_as_an_arrow(self):
+        """Both ends on the same spot: no line, a marker instead, and still clickable."""
+        path = self._new("degenerate.vsdx")
+        a, b, link = self._two_boxes(path, by=3.5)
+        doc = Vsdx(path)
+        part, root = doc._page_root(1)
+        # A single-point Geometry is what the panel actually wrote into demo.vsdx:
+        # both Begin and End landed on the same spot, so drawn_points() is one point.
+        for sh, _p, _d in doc._iter_shapes(root.find(_v("Shapes"))):
+            if sh.get("ID") != str(link):
+                continue
+            for name in ("BeginX", "BeginY", "EndX", "EndY"):
+                for cell in sh.findall(_v("Cell")):
+                    if cell.get("N") == name:
+                        cell.set("V", "4.0")
+            for sec in list(sh.findall(_v("Section"))):
+                if sec.get("N") != "Geometry":
+                    continue
+                sh.remove(sec)
+            # Two rows on the same spot: this is exactly what demo.vsdx ended up with
+            # (Begin == End == (7.1, 5.5)), and drawn_points() collapses it to one point.
+            sec = ET.SubElement(sh, _v("Section"))
+            sec.set("N", "Geometry")
+            sec.set("IX", "0")
+            for ix, kind in ((0, "MoveTo"), (1, "LineTo")):
+                row = ET.SubElement(sec, _v("Row"))
+                row.set("T", kind)
+                row.set("IX", str(ix))
+                for nm, val in (("X", 1.0), ("Y", 1.0)):
+                    cell = ET.SubElement(row, _v("Cell"))
+                    cell.set("N", nm)
+                    cell.set("V", str(val))
+        doc._write_page(part, root)
+        doc.save(backup=False)
+
+        svg = Vsdx(path).to_svg(1, interactive=True, background=False)
+        self.assertNotIn('marker-end="url(#dshv-arrow', svg,
+                         "a zero-length connector still draws an arrow head")
+        self.assertIn("stroke-dasharray=\"3 2\"", svg,
+                      "the broken connector is not marked for the user")
+        self.assertIn('pointer-events="stroke"', svg,
+                      "the broken connector lost its click target")
+
+    def test_reglue_never_leaves_the_line_crossing_a_shape(self):
+        """Dragging one end across the page must not park the line on a box.
+
+        A hand-drawn route wins over the router, so an end drag that puts a
+        segment through an unrelated shape would keep that crossing forever.
+        """
+        path = self._new("reglue-cross.vsdx")
+        a, b, link = self._two_boxes(path, by=3.5)
+        blocker = self._box(path, 3.5, 4.2, 1.5, 1.0)      # sits between a and b
+        doc = Vsdx(path)
+        # give it a hand-drawn route that runs straight through the blocker
+        doc.set_route(link, [(3.0, 5.5), (6.0, 5.5)], page=1)
+        doc.save(backup=False)
+
+        doc = Vsdx(path)
+        doc.reglue(link, "end", a, page=1)
+        doc.save(backup=False)
+
+        doc = Vsdx(path)
+        pts = _pts(doc.drawn_points(link, 1))
+        boxes = {s["id"]: s["bbox"] for s in doc.shapes(1) if not s["connector"]}
+        glued = {str(c["to"]) for c in next(s for s in doc.shapes(1) if s["id"] == link)["connects"]}
+        for sid, box in boxes.items():
+            if sid in glued:
+                continue
+            for i in range(len(pts) - 1):
+                self.assertFalse(
+                    Vsdx._seg_hits_box(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1], box),
+                    "connector %s still cuts through shape %s: %r" % (link, sid, pts))
+        self.assertTrue(_axis_aligned(pts), "re-route is not orthogonal: %r" % (pts,))
+
+    def test_svg_draws_the_same_polyline_the_panel_shows(self):
+        """Rendering must use drawn_points(), not the raw Geometry rows."""
+        path = self._new("render-parity.vsdx")
+        a, b, link = self._two_boxes(path, by=3.5)
+        raw = [(3.0, 5.5), (4.0, 5.5), (4.0, 3.5), (5.5, 3.5), (5.5, 4.5)]
+        self._route(path, link, raw)
+        doc = Vsdx(path)
+        svg = doc.to_svg(1, interactive=True, background=False)
+        drawn = doc.drawn_points(link, 1)
+        first = "M %0.4f %0.4f" % (drawn[0][0], 8.5 - drawn[0][1])
+        self.assertIn(first, svg, "the svg does not start where drawn_points does")
 
     # --------------------------------------------------------- drawn_points
     def test_drawn_points_prefers_manual_geometry_then_simplifies_auto_route(self):

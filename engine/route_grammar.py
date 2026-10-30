@@ -19,6 +19,7 @@ Rules enforced (violations are reported, never drawn silently):
 
 EPS = 1e-6
 STUB = 0.22          # short straight run off the port, the way Visio leaves a shape
+LANE = 0.25          # how far outside a box a detour lane runs
 
 
 # --------------------------------------------------------------------------- points
@@ -72,6 +73,15 @@ def _ideal(node, other):
     return best, best_score
 
 
+def other_of(edges, eid, node):
+    """The partner node of one connector end."""
+    for e in edges:
+        if e["id"] != eid:
+            continue
+        return e["b"] if e["a"] == node else e["a"]
+    raise KeyError("connector %s has no edge" % eid)
+
+
 def assign(nodes, edges):
     """One distinct point per connector end.
 
@@ -102,19 +112,26 @@ def assign(nodes, edges):
     for e in edges:
         out_deg[e["a"]] = out_deg.get(e["a"], 0) + 1
     for eid, end, node, pt in sorted(lost, key=lambda it: -out_deg.get(it[2], 0)):
-        taken = {v[4] for (n, v) in choice.items() if n[0] == node} if False else                 {pt2[4] for (e2, d2), pt2 in choice.items() if want.get((e2, d2), (None,))[0] == node}
+        taken = {pt2[4] for (e2, d2), pt2 in choice.items()
+                 if want.get((e2, d2), (None,))[0] == node}
         entry = None
         for (e2, d2), pt2 in choice.items():
             if d2 == "b" and want.get((e2, d2), (None,))[0] == node:
                 entry = pt2[4]
                 break
-        order = []
+        # The fallback order must be built from the points this node actually has.
+        # A shape with its own Connection rows names them c0..cN, so looking for
+        # the default keys L/R/T/B there used to raise StopIteration and take the
+        # whole router down (every connector then fell back to a straight stub).
+        points = anchors(nodes[node])
+        dx, dy = _dir_to(nodes[node]["bbox"], nodes[other_of(edges, eid, node)]["bbox"])
+        order = sorted(points, key=lambda a: -(a[2] * dx + a[3] * dy))
         if end == "a" and entry:
-            order.append(OPP.get(entry))
-        order += [k for k in ("R", "B", "L", "T")]
-        for key in order:
-            if key and key not in taken:
-                choice[(eid, end)] = next(x for x in anchors(nodes[node]) if x[4] == key)
+            opposite = [a for a in order if a[4] == OPP.get(entry)]
+            order = opposite + [a for a in order if a[4] != OPP.get(entry)]
+        for candidate in order:
+            if candidate[4] not in taken:
+                choice[(eid, end)] = candidate
                 break
         else:
             choice[(eid, end)] = pt
@@ -171,6 +188,31 @@ def _join(a, n1, b, n2, shift=0.0):
     return [(ax, ay), (ax, by), (bx, by)]
 
 
+def _lanes(boxes, skip, p1, p2):
+    """Candidate routing lanes: just outside every box, plus the two mid lines.
+
+    The old search only nudged the join by a few tenths of an inch, so a connector
+    whose two ends sat on opposite sides of a shape had no candidate that went
+    around it and fell through to a straight line across the box.
+    """
+    xs, ys = [], []
+    for sid, b in boxes.items():
+        if sid in skip:
+            continue
+        xs.extend((b["x"] - LANE, b["x"] + b["w"] + LANE))
+        ys.extend((b["y"] - LANE, b["y"] + b["h"] + LANE))
+    xs.extend(((p1[0] + p2[0]) / 2.0,))
+    ys.extend(((p1[1] + p2[1]) / 2.0,))
+    return xs, ys
+
+
+def _via_lane(p1, n1, p2, n2, lane, vertical):
+    """Orthogonal path that leaves along n1, runs down a lane, and enters along n2."""
+    if vertical:                      # lane is an x, so the long runs are vertical
+        return _clean([p1, (lane, p1[1]), (lane, p2[1]), p2])
+    return _clean([p1, (p1[0], lane), (p2[0], lane), p2])
+
+
 def route(nodes, edges, choice):
     boxes = {nid: nodes[nid]["bbox"] for nid in nodes}
     routes, bad = {}, []
@@ -180,6 +222,7 @@ def route(nodes, edges, choice):
         p2, n2 = (pb[0], pb[1]), (pb[2], pb[3])
         skip = {e["a"], e["b"]}
         best, blocked = None, True
+        # 1. the tight joins the router has always used
         for stub in (STUB, STUB * 2, STUB * 3, STUB * 5):
             a = (p1[0] + n1[0] * stub, p1[1] + n1[1] * stub)
             b = (p2[0] + n2[0] * stub, p2[1] + n2[1] * stub)
@@ -192,6 +235,19 @@ def route(nodes, edges, choice):
                     best = path
             if not blocked:
                 break
+        # 2. lanes just outside the boxes: this is what actually gets a connector
+        #    around a shape instead of through it
+        if blocked:
+            xs, ys = _lanes(boxes, skip, p1, p2)
+            cands = []
+            for lane in sorted(xs, key=lambda v: abs(v - (p1[0] + p2[0]) / 2.0)):
+                cands.append(_via_lane(p1, n1, p2, n2, lane, True))
+            for lane in sorted(ys, key=lambda v: abs(v - (p1[1] + p2[1]) / 2.0)):
+                cands.append(_via_lane(p1, n1, p2, n2, lane, False))
+            for path in cands:
+                if not _crosses(path, boxes, skip):
+                    best, blocked = path, False
+                    break
         if best is None:
             best = _clean([p1, p2])
         if blocked:

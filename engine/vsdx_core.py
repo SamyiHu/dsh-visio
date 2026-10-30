@@ -229,6 +229,35 @@ class Vsdx:
             })
         return out
 
+    def ports(self, sh, ox: float, oy: float):
+        """The connection points a connector end may glue to, in sheet coordinates.
+
+        Visio stores them as Connection rows relative to the shape origin; when a
+        shape has none it can still be glued anywhere on its outline, so the four
+        side midpoints are the useful fallback.
+        """
+        pts = []
+        for sec in sh.findall(_v("Section")):
+            if sec.get("N") != "Connection":
+                continue
+            for row in sec.findall(_v("Row")):
+                try:
+                    pts.append((round(ox + float(_cellv(row, "X") or 0), 4),
+                                round(oy + float(_cellv(row, "Y") or 0), 4)))
+                except ValueError:
+                    continue
+        if pts:
+            return pts
+        try:
+            w = float(_cellv(sh, "Width") or 0)
+            h = float(_cellv(sh, "Height") or 0)
+        except ValueError:
+            return []
+        return [(round(ox, 4), round(oy + h / 2.0, 4)),
+                (round(ox + w, 4), round(oy + h / 2.0, 4)),
+                (round(ox + w / 2.0, 4), round(oy, 4)),
+                (round(ox + w / 2.0, 4), round(oy + h, 4))]
+
     def shapes(self, page: int = 1):
         part = self.page_part(page)
         root = self._xml(part)
@@ -282,6 +311,11 @@ class Vsdx:
                 "points": ([] if getattr(self, "_no_points", False)
                            else (self.drawn_points(sh.get("ID"), page) if is_connector else [])),
                 "connects": connects.get(sh.get("ID"), []),
+                # The points a connector end may land on, in sheet coordinates.
+                # The panel used to guess four bbox midpoints, which disagree with
+                # the real Connection rows whenever a shape has them, so the drop
+                # marker sat somewhere other than where the end actually landed.
+                "ports": ([] if is_connector else self.ports(sh, pinx - locx, piny - locy)),
                 "props": props,
             })
         return out
@@ -838,23 +872,70 @@ class Vsdx:
                     clean = dedupe([(bx, by), (lane, by), (lane, ey), (ex, ey)])
         return self.set_route(shape_id, clean, page=page)
 
-    @staticmethod
-    def _simplify(points):
-        """Drop collinear and duplicate points so each run is a real corner."""
+    JOG_TOL = 0.02        # inches; below this a "step" is a router artefact, not a corner
+
+    @classmethod
+    def _simplify(cls, points, tol: float = 1e-6, jog: float = None):
+        """Drop duplicate points, micro steps and collinear points.
+
+        A router that lands 0.017in beside the port it aimed at leaves a tiny
+        perpendicular step.  In the file it is invisible, but on screen at 300%
+        it reads as a kink in an otherwise straight run, and it hands the segment
+        handles an extra run nobody wants to drag.  Collapsing it means moving the
+        short run onto its neighbour, which never moves either end point.
+        """
+        if jog is None:
+            jog = cls.JOG_TOL
         out = []
         for pt in points:
-            if out and abs(pt[0] - out[-1][0]) < 1e-6 and abs(pt[1] - out[-1][1]) < 1e-6:
+            if out and abs(pt[0] - out[-1][0]) < tol and abs(pt[1] - out[-1][1]) < tol:
                 continue
             out.append(pt)
         if len(out) <= 2:
             return out
+        # A short run between two parallel runs is a step, not a corner: join the
+        # neighbours and re-run until nothing is left.  The *free* corner moves;
+        # a glued end never does.
+        def _dir(a, b):
+            return "h" if abs(a[1] - b[1]) < tol else ("v" if abs(a[0] - b[0]) < tol else "d")
+        changed = True
+        while changed and len(out) > 3:
+            changed = False
+            for j in range(1, len(out) - 2):
+                a, b = out[j], out[j + 1]
+                if abs(b[0] - a[0]) + abs(b[1] - a[1]) >= jog:
+                    continue
+                before = _dir(out[j - 1], a)
+                after = _dir(b, out[j + 2])
+                if before != after or before == "d":
+                    continue
+                at_start = (j - 1 == 0)
+                at_end = (j + 2 == len(out) - 1)
+                if before == "v":            # two vertical runs, step sideways
+                    if at_end:
+                        out[j - 1] = (out[j + 2][0], out[j - 1][1])
+                    elif at_start:
+                        out[j + 2] = (out[j - 1][0], out[j + 2][1])
+                    else:
+                        out[j + 2] = (out[j - 1][0], out[j + 2][1])
+                else:                        # two horizontal runs, step up/down
+                    if at_end:
+                        out[j - 1] = (out[j - 1][0], out[j + 2][1])
+                    elif at_start:
+                        out[j + 2] = (out[j + 2][0], out[j - 1][1])
+                    else:
+                        out[j + 2] = (out[j + 2][0], out[j - 1][1])
+                del out[j:j + 2]
+                changed = True
+                break
+                break
         keep = [out[0]]
         for i in range(1, len(out) - 1):
             ax, ay = keep[-1]
             bx, by = out[i]
             cx, cy = out[i + 1]
             cross = (bx - ax) * (cy - by) - (by - ay) * (cx - bx)
-            if abs(cross) > 1e-6:
+            if abs(cross) > tol:
                 keep.append(out[i])
         keep.append(out[-1])
         return keep
@@ -987,10 +1068,55 @@ class Vsdx:
                     del cell.attrib["F"]
             # A connector with a hand-drawn route must move its end in the polyline
             # as well: otherwise the glue says one thing and the picture another.
-            self._move_route_end(sh, end, x, y)
+            moved = self._move_route_end(sh, end, x, y)
+            # Moving the end of a hand-drawn route can leave a segment running
+            # straight through an unrelated shape (dragging the end across the
+            # diagram does exactly that).  Hand-drawn geometry beats the router,
+            # so the crossing would survive every later edit.  When that happens,
+            # drop the hand-drawn route and let the router take over: it never
+            # crosses a box, which is the behaviour a dragged end should show.
+            if moved and self._route_crosses_shapes(sh, shape_id, page):
+                for sec in list(sh.findall(_v("Section"))):
+                    if sec.get("N") == "Geometry":
+                        sh.remove(sec)
             break
         self._write_page(part, root)
         return {"ok": True, "shape_id": str(shape_id), "end": str(end), "to": str(to_id)}
+
+    def _route_crosses_shapes(self, sh, shape_id, page: int = 1):
+        """Does this connector's drawn polyline cut through an unrelated shape?
+
+        The router guarantees this never happens; hand-drawn geometry does not,
+        because the user (or an end drag) can put a segment anywhere.
+        """
+        _geo, _origin, pts = self._route_rows(sh)
+        if len(pts) < 2:
+            return False
+        glued = set()
+        for conn in self._connects(self.page_part(page)).get(str(shape_id), []):
+            glued.add(str(conn.get("to")))
+        boxes = {s["id"]: s["bbox"] for s in self.shapes(page) if not s["connector"]}
+        for i in range(len(pts) - 1):
+            x1, y1 = pts[i]
+            x2, y2 = pts[i + 1]
+            for sid, b in boxes.items():
+                if sid in glued:
+                    continue
+                if self._seg_hits_box(x1, y1, x2, y2, b):
+                    return True
+        return False
+
+    @staticmethod
+    def _seg_hits_box(x1, y1, x2, y2, b, pad: float = 0.02, steps: int = 32):
+        """True when the segment enters the box (a little padding absorbs touching)."""
+        for k in range(steps + 1):
+            t = float(k) / steps
+            x = x1 + (x2 - x1) * t
+            y = y1 + (y2 - y1) * t
+            if (b["x"] + pad < x < b["x"] + b["w"] - pad
+                    and b["y"] + pad < y < b["y"] + b["h"] - pad):
+                return True
+        return False
 
     @staticmethod
     def _route_rows(sh):
@@ -1067,7 +1193,17 @@ class Vsdx:
         return self.set_route(shape_id, new_pts, page)
 
     def set_route(self, shape_id, points, page: int = 1):
-        """Write an explicit polyline into the connector's Geometry section."""
+        """Write an explicit polyline into the connector's Geometry section.
+
+        Refuses a route whose ends coincide: a zero-length connector is drawn as a
+        bare arrow head floating in mid-air, which reads as a broken line and
+        cannot be grabbed at all.
+        """
+        points = list(points)
+        if len(points) < 2 or (
+                abs(points[0][0] - points[-1][0]) < 1e-4
+                and abs(points[0][1] - points[-1][1]) < 1e-4):
+            raise VsdxError("a connector needs two distinct end points")
         part, root = self._page_root(page)
         det = self.shape(shape_id, page)
         cells = det["cells"]
@@ -1861,6 +1997,9 @@ class Vsdx:
         meta = self.pages[page - 1]
         W, H = meta["width"], meta["height"]
         shapes = self.shapes(page)
+        # connectors whose two ends coincide; collected while drawing so the panel
+        # and validate() can report them instead of showing a broken line
+        self.degenerate = []
         view = self.view_box(page)
         out = []
         out.append(
@@ -2047,8 +2186,15 @@ class Vsdx:
             marker = 'url(#dshv-arrow-%s)' % line_color.lstrip("#") if end_on else "none"
             marker_start = 'url(#dshv-arrow-%s)' % line_color.lstrip("#") if begin_on else "none"
             out.append(open_group(s["id"]))
-            pts_ = self.geometry_points(s["id"], page)
-            if len(pts_) >= 2:
+            # Draw exactly the polyline the panel shows: drawn_points() already
+            # prefers a hand-drawn route, falls back to the router, and drops
+            # duplicate and micro-step points.  Rendering raw Geometry here is what
+            # turned a 0.017in router step into a visible kink at high zoom.
+            pts_ = self.drawn_points(s["id"], page)
+            distinct = (len(pts_) >= 2
+                        and (abs(pts_[0][0] - pts_[-1][0]) > 1e-4
+                             or abs(pts_[0][1] - pts_[-1][1]) > 1e-4))
+            if distinct:
                 d = "M %0.4f %0.4f" % (pts_[0][0], H - pts_[0][1])
                 for px, py in pts_[1:]:
                     d += " L %0.4f %0.4f" % (px, H - py)
@@ -2056,26 +2202,18 @@ class Vsdx:
                        'marker-end="%s" stroke-linejoin="round"/>'
                        % (d, line_color, width_attr, marker_start, marker))
             else:
-                # Visio routes a dynamic connector at right angles; a straight diagonal
-                # across the page is what the file stores, not what Visio shows.
-                name_u = str(det.get("name") or "").lower()
-                dynamic = "dynamic" in name_u
-                # Attach to the middle of the facing sides, so a connector never stops
-                # short of the shape or runs into it at an angle.
-                ends = [str(c["to"]) for c in (s.get("connects") or [])]
-                boxes = [by_id[i]["bbox"] for i in ends if i in by_id]
-                # A connector that carries its own polyline was routed by hand: it
-                # wins over the automatic router, otherwise the user's bends vanish.
-                manual = self.geometry_points(s["id"], page)
-                if len(manual) >= 2 and len(manual) > 2:
-                    pts2 = manual
-                else:
-                    pts2 = page_routes.get(s["id"]) or [(x1, y1), (x2, y2)]
-                d = "M %0.4f %0.4f" % (pts2[0][0], H - pts2[0][1])
-                for px, py in pts2[1:]:
-                    d += " L %0.4f %0.4f" % (px, H - py)
-                out.append('<path d="%s" fill="none" stroke="%s" %s marker-end="%s"/>'
-                           % (d, line_color, width_attr, marker))
+                # Both ends coincide: there is no line to draw.  A zero-length path
+                # still paints its arrow head, which looks like a line that broke off
+                # in mid-air and cannot be grabbed.  Mark the spot instead, and keep
+                # a click target so the connector can still be selected and deleted.
+                px, py = (pts_[0] if pts_ else (x1, y1))
+                d = "M %0.4f %0.4f L %0.4f %0.4f" % (px, H - py, px, H - py)
+                out.append('<circle cx="%0.4f" cy="%0.4f" r="0.075" fill="none" '
+                           'stroke="#E5484D" stroke-width="2" '
+                           'vector-effect="non-scaling-stroke" '
+                           'stroke-dasharray="3 2"/>'
+                           % (px, H - py))
+                self.degenerate.append(s["id"])
             # fat, invisible target so a 0.01in line can be clicked
             out.append('<path d="%s" fill="none" stroke="transparent" stroke-width="12" '
                        'vector-effect="non-scaling-stroke" pointer-events="stroke"/>' % d)

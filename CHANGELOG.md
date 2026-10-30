@@ -36,9 +36,38 @@
   more than two points, so straightening a connector handed it back to the router).
 - The zoom toolbar moved out of the drawing into a dock row under it: floating over the
   page it could cover a connector handle near the bottom edge and swallow the click.
-- New regression tests: 11 engine tests for `reglue` / `move_segment` / `_simplify` /
-  `drawn_points`, plus `tests/interactive.html` — a real-browser harness that drives the
-  actual panel against the actual engine and asserts the connector gestures.
+- **Fixed a connector drawn straight through a shape**: the router crashed in `assign()`
+  (`StopIteration` on shapes that carry their own `Connection` rows), returned no routes,
+  and every connector fell back to a two-point stub across the page. The fallback now uses
+  the node's real anchors.
+- **Connectors route around shapes, not through them.** The candidate search only nudged the
+  join by a few tenths of an inch, so two ends on opposite sides of a box had no way around
+  it. Routing now also tries lanes just outside every box, which is what actually gets the
+  line around a shape. A matrix of all 26 single-end reglue combinations in `examples/demo.vsdx`
+  went from 12 crossings to 0.
+- **A re-glued end no longer keeps a hand-drawn route that cuts through a shape.** Hand-drawn
+  geometry wins over the router, so dragging an end across the diagram parked the crossing
+  permanently. `reglue` now drops that route and lets the router re-route it.
+- **The drop marker now matches where the end lands** (what you see is what you get). The green
+  marker was positioned through a second transform that mixed the viewBox origin into sheet
+  coordinates, so it promised a port 0.25in away from the one the drop glued to. The panel
+  also uses the engine's real `Connection` points instead of guessing four bbox midpoints,
+  and the tooltip names the exact coordinate it will commit.
+- **Alignment assist while dragging a connector run**: the run snaps to the edges and centre
+  lines of the nearby shapes, a blue dashed guide shows the line it aligned to, and the tooltip
+  says `[对齐]`. Hold Alt to drag free. Shape drags use the same guide code.
+- **Zero-length connectors are marked, not drawn**: a connector whose two ends coincide was
+  painted as a bare arrow head floating in mid-air with no line to grab. It is now drawn as a
+  dashed marker with a warning, keeps a click target, and `set_route` refuses to create one.
+- **Micro steps in a route are collapsed**: a router landing 0.017in beside its port left a step
+  that reads as a kink at high zoom and gives the segment handles a useless extra run. Steps
+  under 0.02in are removed without moving either glued end.
+- Rendering now draws exactly `drawn_points()` — the polyline the panel shows — instead of the
+  raw Geometry rows, so the picture and the handles can no longer disagree.
+- New regression tests: 16 engine tests for `reglue` / `move_segment` / `_simplify` /
+  `drawn_points` / degenerate connectors / route rendering, plus `tests/interactive.html` — a
+  real-browser harness that drives the actual panel against the actual engine and asserts the
+  connector gestures, including that the drop marker and the committed end agree.
 
 
 ## 1.20.0

@@ -53,7 +53,16 @@ window.harnessBoot = async function boot() {
       if (String(url).includes('/dsh-visio/op') && init && init.body) {
         try { window.__OPS__.push(JSON.parse(init.body)) } catch (e) { /* ignore */ }
       }
-      return realFetch(url, init)
+      const res = await realFetch(url, init)
+      // The spec needs the state the panel is actually rendering (ports, pageSize)
+      if (String(url).includes('/dsh-visio/op')) {
+        try {
+          const copy = res.clone()
+          const json = await copy.json()
+          if (json && json.shapes) window.__STATE__ = json
+        } catch (e) { /* ignore */ }
+      }
+      return res
     }
     try {
       window.localStorage.setItem('dshv:lastDoc', LIVE_DOC)
@@ -174,8 +183,31 @@ window.runSpec = async function runSpec() {
   const lastOp = (action) => window.__OPS__.filter((o) => o.action === action).slice(-1)[0]
 
   try {
+    // The spec runs against a fixture or a live document, so pick the connector
+    // that actually has a polyline instead of hard-coding a fixture id.
+    const connectorId = () => {
+      const st = window.__STATE__
+      if (st && st.shapes) {
+        const withRoute = st.shapes.filter((s) => s.connector && s.points && s.points.length >= 3)
+        if (withRoute.length) return withRoute[0].id
+        const anyConn = st.shapes.filter((s) => s.connector)
+        if (anyConn.length) return anyConn[0].id
+      }
+      return '5'
+    }
+    const CONN = connectorId()
+    const targetShape = () => {
+      const st = window.__STATE__
+      const conn = st && st.shapes && st.shapes.find((s) => s.id === CONN)
+      const others = (st && st.shapes || []).filter((s) => !s.connector && s.id !== CONN)
+      const used = new Set((conn && conn.connects || []).map((c) => String(c.to)))
+      const free = others.filter((s) => !used.has(s.id))
+      return (free[0] || others[0] || { id: '4' }).id
+    }
+    const OTHER = targetShape()
+
     // ---- 1. selecting a connector shows handles ---------------------------
-    await window.harness.clickShape('5')
+    await window.harness.clickShape(CONN)
     await new Promise((r) => setTimeout(r, 600))
     const counts = window.harness.counts()
     check('handles: two ends, one band, one dot', counts.ends === 2 && counts.bands >= 1 && counts.dots >= 1,
@@ -195,7 +227,7 @@ window.runSpec = async function runSpec() {
     const moved = await waitOp('move_segment')
     check('band drag commits move_segment', moved, JSON.stringify(window.__OPS__.slice(-1)))
     const op = lastOp('move_segment')
-    check('band drag names the connector (not null)', op && op.shape_id === '5', op && String(op.shape_id))
+    check('band drag names the connector (not null)', op && op.shape_id === CONN, op && String(op.shape_id))
     await new Promise((r) => setTimeout(r, 400))
     const afterBand = pathOf()
     const e0 = endpoints(before)
@@ -205,7 +237,7 @@ window.runSpec = async function runSpec() {
     check('band drag leaves both ends where they were', same, before + ' -> ' + afterBand)
 
     // ---- 3. the blue dot does the same -----------------------------------
-    await window.harness.clickShape('5')
+    await window.harness.clickShape(CONN)
     await new Promise((r) => setTimeout(r, 600))
     const dot = document.querySelector('[data-route-handle]').getBoundingClientRect()
     const dp = { x: dot.left + dot.width / 2, y: dot.top + dot.height / 2 }
@@ -215,7 +247,7 @@ window.runSpec = async function runSpec() {
     const dotMoved = await waitOp('move_segment')
     check('dot drag commits move_segment', dotMoved, JSON.stringify(window.__OPS__.slice(-1)))
     const dotOp = lastOp('move_segment')
-    check('dot drag names the connector', dotOp && dotOp.shape_id === '5', dotOp && String(dotOp.shape_id))
+    check('dot drag names the connector', dotOp && dotOp.shape_id === CONN, dotOp && String(dotOp.shape_id))
     await new Promise((r) => setTimeout(r, 400))
     const e2 = endpoints(pathOf())
     const e3 = endpoints(beforeDot)
@@ -224,25 +256,34 @@ window.runSpec = async function runSpec() {
     check('dot drag leaves both ends where they were', same2, beforeDot + ' -> ' + pathOf())
 
     // ---- 4. dragging a red end re-glues it to the shape under the cursor --
-    await window.harness.clickShape('5')
+    await window.harness.clickShape(CONN)
     await new Promise((r) => setTimeout(r, 600))
     const endBox = window.harness.centreOf('[data-route-end]', 1)
-    const targetShape = document.querySelector('[data-shape-id="4"]').getBoundingClientRect()
-    const target = { x: targetShape.left + targetShape.width / 2, y: targetShape.top + 2 }
+    const targetRect = document.querySelector('[data-shape-id="' + OTHER + '"]').getBoundingClientRect()
+    const target = { x: targetRect.left + targetRect.width / 2, y: targetRect.top + 2 }
     window.harness.clearOps()
     const endProbe = window.harness.dragProbe(endBox.x, endBox.y, target.x, target.y, 8)
     const named = endProbe.tips[endProbe.tips.length - 1] && endProbe.tips[endProbe.tips.length - 1].text
-    check('end drag preview names the target shape', /#4/.test(named || ''), named)
+    check('end drag preview names the target shape', new RegExp('#' + OTHER).test(named || ''), named)
     const glued = await waitOp('reglue')
     check('end drag commits reglue', glued, JSON.stringify(window.__OPS__.slice(-1)))
     const glueOp = lastOp('reglue')
-    check('reglue targets the shape under the cursor', glueOp && glueOp.to === '4', glueOp && String(glueOp.to))
+    check('reglue targets the shape under the cursor', glueOp && glueOp.to === OTHER, glueOp && String(glueOp.to))
     await new Promise((r) => setTimeout(r, 600))
     const after = window.harness.centreOf('[data-route-end]', 1)
-    const shape4 = document.querySelector('[data-shape-id="4"]').getBoundingClientRect()
+    const shape4 = document.querySelector('[data-shape-id="' + OTHER + '"]').getBoundingClientRect()
     const near = after && Math.abs(after.x - (shape4.left + shape4.width / 2)) < 6 && Math.abs(after.y - shape4.top) < 12
     check('the re-glued end sits on the target edge', near,
       JSON.stringify({ end: after, shape: { left: shape4.left, top: shape4.top, w: shape4.width } }))
+
+    // ---- 4b. what the green drop marker promises must be where the end lands --
+    // The marker used to be drawn through a second, viewBox-based transform, so it
+    // pointed at a port 0.25in away from the one the drop actually glued to.
+    const markerDrop = await window.harness.markerDrop(CONN, 1, OTHER, 0)
+    check('drop marker sits on the port the drop will use', markerDrop.markerMatchesCommit,
+      JSON.stringify(markerDrop))
+    check('the committed end lands exactly where the marker pointed', markerDrop.landedOnMarker,
+      JSON.stringify({ landed: markerDrop.landed, marker: markerDrop.marker, sheet: markerDrop.committed }))
 
     // ---- 5. the zoom toolbar must stay a thin bar and keep off the handles --
     // A handle only matters where it can actually be hit: the scroller clips
@@ -356,6 +397,76 @@ window.harness = {
     return { x, y }
   },
   tooltip: () => { const el = document.querySelector('.dshv-dragtip'); return el ? { text: el.textContent, display: el.style.display } : null },
+  /**
+   * Drag a connector end onto a port and prove the green marker, the tooltip and
+   * the committed coordinates all name the same point (what you see is what lands).
+   */
+  markerDrop: async (shapeId, endIndex, toShapeId, portIndex) => {
+    await window.harness.clickShape(shapeId)
+    await new Promise((r) => setTimeout(r, 600))
+    const ends = document.querySelectorAll('[data-route-end]')
+    const rect = ends[endIndex] && ends[endIndex].querySelector('rect')
+    if (!rect) return { error: 'no end handle' }
+    const rb = rect.getBoundingClientRect()
+    const from = { x: rb.left + rb.width / 2, y: rb.top + rb.height / 2 }
+    const svg = window.harness.svg()
+    const box = svg.getBoundingClientRect()
+    const vb = svg.viewBox.baseVal
+    const scale = box.width / vb.width
+    const pageH = window.harness.pageH()
+    const toPx = (sx, sy) => ({
+      x: box.left + (sx - vb.x) * scale,
+      y: box.top + ((pageH - sy) - vb.y) * scale,
+    })
+    const port = window.harness.portOf(toShapeId, portIndex)
+    const target = toPx(port[0], port[1])
+    window.harness.clearOps()
+    const el = document.elementFromPoint(from.x, from.y)
+    if (!el) return { error: 'no hit target' }
+    el.dispatchEvent(new PointerEvent('pointerdown', { clientX: from.x, clientY: from.y, button: 0, buttons: 1, bubbles: true, cancelable: true, pointerId: 1, pointerType: 'mouse' }))
+    for (let i = 1; i <= 8; i += 1) {
+      window.dispatchEvent(new PointerEvent('pointermove', {
+        clientX: from.x + (target.x - from.x) * i / 8,
+        clientY: from.y + (target.y - from.y) * i / 8,
+        buttons: 1, bubbles: true, pointerId: 1, pointerType: 'mouse',
+      }))
+    }
+    const circle = document.querySelector('#dshv-drop circle')
+    const markerSheet = circle ? [Number(circle.getAttribute('cx')), Number(circle.getAttribute('cy'))] : null
+    const tip = window.harness.tooltip()
+    window.dispatchEvent(new PointerEvent('pointerup', { clientX: target.x, clientY: target.y, button: 0, bubbles: true, pointerId: 1, pointerType: 'mouse' }))
+    await new Promise((r) => setTimeout(r, 800))
+    const op = window.__OPS__.filter((o) => o.action === 'reglue').slice(-1)[0]
+    const committed = op ? [op.x, op.y] : null
+    const afterEnds = document.querySelectorAll('[data-route-end]')
+    const ar = afterEnds[endIndex] && afterEnds[endIndex].querySelector('rect')
+    let landed = null
+    if (ar) {
+      const b2 = ar.getBoundingClientRect()
+      landed = [
+        vb.x + (b2.left + b2.width / 2 - box.left) / scale,
+        pageH - vb.y - (b2.top + b2.height / 2 - box.top) / scale,
+      ]
+    }
+    const close = (a, b, tol) => !!a && !!b && Math.abs(a[0] - b[0]) < tol && Math.abs(a[1] - b[1]) < tol
+    return {
+      port, marker: markerSheet, committed, landed, tip: tip && tip.text,
+      markerMatchesCommit: close(markerSheet, committed, 0.02),
+      landedOnMarker: close(landed, markerSheet, 0.02),
+    }
+  },
+  pageH: () => {
+    const st = window.__STATE__
+    if (st && st.pageSize) return st.pageSize.h
+    const rect = window.harness.svg().querySelector('rect')
+    return Number(rect && rect.getAttribute('height'))
+  },
+  portOf: (id, index) => {
+    const st = window.__STATE__
+    const shape = st && (st.shapes || []).find((s) => s.id === id)
+    if (shape && shape.ports && shape.ports[index]) return shape.ports[index]
+    return null
+  },
 }
 </script>
 </head>
