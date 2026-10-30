@@ -9,4 +9,5 @@ _electron-install.log
 tests/_uicheck.html
 tests/vendor/
 tests/fixtures/_live.vsdx
-_uicheck.htmltests/_out
+_uicheck.html
+tests/_out/
