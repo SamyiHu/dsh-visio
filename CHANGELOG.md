@@ -1,6 +1,7 @@
 # Changelog
 
-## Unreleased
+## 1.21.0 — 2026-11-02
+
 - **A line is a line, not a shape.** The 直线 tool used to drop a 2x1.2in box with a diagonal
   drawn inside it: it had a fill, eight scale handles and took part in shape alignment. It now
   creates a 1-D line (Begin/End cells), is drawn by its own renderer pass (a horizontal line

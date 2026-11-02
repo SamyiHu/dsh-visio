@@ -8,7 +8,8 @@
 - 插件仓库：`C:\Users\SOC\Documents\visio-plugin`
 - 通过 desktop profile 的 `link:` 安装为 `@local/dsh-visio`
 - 宿主：DeepSeek Harness 桌面版（Windows）
-- 版本号：`package.json` 为 **1.20.0**。**用户要求：平时不改版本号，只在准备发布时改。**
+- 版本号：`package.json` 为 **1.21.0**（2026-11-02 发布）。**用户要求：平时不改版本号，只在准备发布时改。**
+  注意 `client.js` 顶部的 `CLIENT_BUILD` 与 `package.json` 必须同步，页脚显示它。
 - 推送：`git push origin master`，GitHub 网络时好时坏，失败就稍后重试，不要改写历史
 
 ### 结构
