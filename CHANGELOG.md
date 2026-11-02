@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.21.1 — 2026-11-02
+
+- **The background grid did not scale with the shapes.** The cell size was a fixed
+  `18px * zoom` while the page was `fitBox * zoom`, so grid and drawing ran on two
+  unrelated scales and slid against each other when zooming. A cell is now a quarter
+  inch of the drawing (`pageBox / pageWidth * 0.25`) and the grid is painted on the page
+  element itself, so it shares the page origin: an 11in page is 44 cells wide at every
+  zoom level.
+- The grid now covers the page only (as Visio does) instead of the whole scroll area.
+- The page no longer shrinks below its zoomed width (`max-width:100%` used to squeeze it
+  inside the scroll box, which also desynchronised the grid from the SVG).
+- Browser harness: one more assertion that the cell count stays constant across a
+  two-step zoom (24 assertions total).
+
 ## 1.21.0 — 2026-11-02
 
 - **A line is a line, not a shape.** The 直线 tool used to drop a 2x1.2in box with a diagonal

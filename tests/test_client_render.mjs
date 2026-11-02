@@ -195,8 +195,14 @@ assert.equal(findAll(fabOnly, (node) => node.props?.className === 'dshv-fab').le
 
 const canvasWrap = findAll(loadedTree, (n) => String(n.props?.className || '').includes('dshv-canvasWrap'))[0]
 assert.ok(canvasWrap, 'canvas wrap missing')
-assert.match(String(canvasWrap.props.style.backgroundImage), /linear-gradient/, 'grid gradient missing')
-assert.match(String(canvasWrap.props.style.backgroundSize), /\d+px \d+px/, 'grid size missing')
+// The grid belongs to the page, not to the scroll area: sharing the page's origin
+// is what keeps the cells locked to the drawing while zooming.
+assert.equal(String(canvasWrap.props.style.backgroundImage), 'none', 'grid must not sit on the scroll area')
+const pageEl = findAll(loadedTree, (n) => String(n.props?.className || '').includes('dshv-page'))[0]
+assert.ok(pageEl, 'page element missing')
+assert.match(String(pageEl.props.style.backgroundImage), /linear-gradient/, 'grid gradient missing')
+assert.match(String(pageEl.props.style.backgroundSize), /\d+(\.\d+)?px \d+(\.\d+)?px/, 'grid size missing')
+
 
 console.log('ok — zoom toolbar renders')
 console.log('ok — floating canvas window renders')

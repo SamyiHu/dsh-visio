@@ -404,6 +404,29 @@ window.runSpec = async function runSpec() {
       }
     }
 
+    // ---- 9. the grid must scale with the page, not with a pixel constant ----
+    {
+      const page = document.querySelector('.dshv-page')
+      const cells = () => {
+        const cs = getComputedStyle(page)
+        const unit = parseFloat((cs.backgroundSize || '').split(',')[0])
+        const w = page.getBoundingClientRect().width
+        return { unit: Math.round(unit * 100) / 100, w: Math.round(w), cells: w / unit }
+      }
+      const expect = (window.__STATE__.pageSize.w || 11) / 0.25
+      const before = cells()
+      const zin = Array.from(document.querySelectorAll('.dshv-zbtn')).find((b) => b.textContent === '+')
+      zin.click(); zin.click()
+      await new Promise((r) => setTimeout(r, 800))
+      const after = cells()
+      check('grid cells stay a fixed fraction of the page when zooming',
+        Math.abs(before.cells - after.cells) < 0.3 && Math.abs(after.cells - expect) < 1.5,
+        JSON.stringify({ before, after, expect }))
+      const zout = Array.from(document.querySelectorAll('.dshv-zbtn')).find((b) => b.textContent === '\u2212')
+      zout.click(); zout.click()
+      await new Promise((r) => setTimeout(r, 600))
+    }
+
     // ---- 5. the zoom toolbar must stay a thin bar and keep off the handles --
     // A handle only matters where it can actually be hit: the scroller clips
     // anything past its edge, so intersect with the visible canvas rect first.

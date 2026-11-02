@@ -10,7 +10,7 @@ window.__ModuleLoader__.load({
     const PANEL_ID = 'dsh-visio'
     const POLL_MS = 2500
     // Bumped with every release: the footer shows it, so a stale bundle is obvious.
-    const CLIENT_BUILD = '1.21.0'
+    const CLIENT_BUILD = '1.21.1'
 
     /* ------------------------------------------------------------- locale */
 
@@ -1968,9 +1968,28 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
       const fitH = availH > 80 && ratio > 0 ? Math.round(availH / ratio) : fitW
       const fitBox = doc ? Math.max(120, Math.round(Math.min(fitW, fitH, naturalW))) : 0
       const pageBox = Math.round(fitBox * (zoom ?? 1))
-      const gridUnit = Math.max(6, Math.round(18 * (zoom ?? 1)))
+      // One grid cell is a quarter inch on the drawing, not a fixed pixel count:
+      // the old constant (18px * zoom) had nothing to do with pageBox, so the grid
+      // and the shapes scaled from two different origins and never lined up.
+      const pageWin = doc ? doc.pageSize.w : 11
+      let gridStepIn = 0.25
+      let gridUnit = (pageBox / pageWin) * gridStepIn
+      while (gridUnit < 6 && gridStepIn < 4) {
+        gridStepIn *= 2
+        gridUnit = (pageBox / pageWin) * gridStepIn
+      }
+      while (gridUnit > 48 && gridStepIn > 0.0625) {
+        gridStepIn /= 2
+        gridUnit = (pageBox / pageWin) * gridStepIn
+      }
       const gridSize = `${gridUnit}px ${gridUnit}px, ${gridUnit}px ${gridUnit}px, `
         + `${gridUnit * 4}px ${gridUnit * 4}px, ${gridUnit * 4}px ${gridUnit * 4}px`
+      const gridImage = [
+        'linear-gradient(to right, rgba(120,132,150,0.22) 1px, transparent 1px)',
+        'linear-gradient(to bottom, rgba(120,132,150,0.22) 1px, transparent 1px)',
+        'linear-gradient(to right, rgba(120,132,150,0.42) 1px, transparent 1px)',
+        'linear-gradient(to bottom, rgba(120,132,150,0.42) 1px, transparent 1px)',
+      ].join(',')
 
       const pythonBroken = config && config.pythonOk === false
       const nothingOpen = !doc
@@ -2141,18 +2160,22 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
                   h('div', {
                     className: `dshv-canvasWrap${tool === 'hand' ? ' dshv-hand' : ''}`,
                     ref: canvasBox,
-                    style: {
-                      backgroundImage: showGrid ? [
-                        'linear-gradient(to right, rgba(120,132,150,0.22) 1px, transparent 1px)',
-                        'linear-gradient(to bottom, rgba(120,132,150,0.22) 1px, transparent 1px)',
-                        'linear-gradient(to right, rgba(120,132,150,0.42) 1px, transparent 1px)',
-                        'linear-gradient(to bottom, rgba(120,132,150,0.42) 1px, transparent 1px)',
-                      ].join(',') : 'none',
-                      backgroundSize: gridSize,
-                    },
+                    style: { backgroundImage: 'none' },
                   },
                     h('div', { className: 'dshv-canvasInner' },
-                      h('div', { ref: pageRef, className: 'dshv-page', style: { aspectRatio: `${doc.pageSize.w} / ${doc.pageSize.h}`, width: `${pageBox}px` } },
+                      h('div', { ref: pageRef, className: 'dshv-page', style: {
+                        aspectRatio: `${doc.pageSize.w} / ${doc.pageSize.h}`,
+                        width: `${pageBox}px`,
+                        // Drawn on the page itself so the grid shares the page's
+                        // origin: zooming keeps cells glued to the shapes instead of
+                        // sliding against them.
+                        backgroundImage: showGrid ? gridImage : 'none',
+                        backgroundSize: gridSize,
+                        backgroundPosition: '0 0',
+                        backgroundColor: '#FFFFFF',
+                        flex: '0 0 auto',
+                        maxWidth: 'none',
+                      } },
                       h('div', {
                         className: 'dshv-svgHost',
                         onClick: onCanvasClick,
