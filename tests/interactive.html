@@ -407,6 +407,27 @@ window.runSpec = async function runSpec() {
       }
     }
 
+    // ---- 11. a new shape lands in a free spot and is selected at once --------
+    {
+      const before = new Set((window.__STATE__.shapes || []).map((s) => s.id))
+      const rectBtn = document.querySelectorAll('.dshv-kind')[0]
+      rectBtn.click()
+      await new Promise((r) => setTimeout(r, 900))
+      const added1 = (window.__STATE__.shapes || []).filter((s) => !before.has(s.id))
+      const first = added1[added1.length - 1]
+      check('a new shape is selected straight away (handles visible)',
+        document.querySelectorAll('[data-resize]').length === 8,
+        String(document.querySelectorAll('[data-resize]').length))
+      rectBtn.click()
+      await new Promise((r) => setTimeout(r, 900))
+      const added2 = (window.__STATE__.shapes || []).filter((s) => !before.has(s.id))
+      const second = added2[added2.length - 1]
+      const apart = first && second
+        && (Math.abs(first.bbox.x - second.bbox.x) > 0.05 || Math.abs(first.bbox.y - second.bbox.y) > 0.05)
+      check('a second new shape does not land on the first', apart,
+        JSON.stringify({ first: first && first.bbox, second: second && second.bbox }))
+    }
+
     // ---- 10. resize + rotate handles on a normal shape ------------------------
     {
       const plain = (window.__STATE__.shapes || []).filter((s) => !s.connector && !s.line)

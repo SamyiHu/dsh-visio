@@ -10,7 +10,7 @@ window.__ModuleLoader__.load({
     const PANEL_ID = 'dsh-visio'
     const POLL_MS = 2500
     // Bumped with every release: the footer shows it, so a stale bundle is obvious.
-    const CLIENT_BUILD = '1.22.0'
+    const CLIENT_BUILD = '1.22.1'
 
     /* ------------------------------------------------------------- locale */
 
@@ -1030,17 +1030,50 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         runOp({ action: 'set_line', path: current.path, page: current.page, shape_id: selectedRef.current, start, end })
       }, [runOp])
 
+      // Drop a new shape where it can actually be seen.  Every insert used to land on
+      // the exact centre of the page, so a second rectangle sat perfectly on top of
+      // the first: the canvas did not change and the click looked like it had failed.
+      const freeSpot = (current, w, h) => {
+        const { w: pageW, h: pageH } = current.pageSize
+        const boxes = (current.shapes || []).filter((s) => !s.connector && s.bbox).map((s) => s.bbox)
+        const hits = (bx) => boxes.some((b) => bx.x < b.x + b.w - 0.02 && bx.x + bx.w > b.x + 0.02
+          && bx.y < b.y + b.h - 0.02 && bx.y + bx.h > b.y + 0.02)
+        let x = (pageW - w) / 2
+        let y = (pageH - h) / 2
+        for (let i = 0; i < 40; i += 1) {
+          if (!hits({ x, y, w, h })) break
+          x += 0.3
+          y -= 0.3
+          if (x + w > pageW - 0.1) { x = 0.4; y -= 0.3 }
+          if (y < 0.1) { y = pageH - h - 0.4; x += 0.3 }
+        }
+        return {
+          x: Math.round(Math.max(0.05, Math.min(x, Math.max(0.05, pageW - w - 0.05))) * 1000) / 1000,
+          y: Math.round(Math.max(0.05, Math.min(y, Math.max(0.05, pageH - h - 0.05))) * 1000) / 1000,
+        }
+      }
+
       const addShape = useCallback((kind) => {
         const current = docRef.current
         if (!current) return
         const { w: pageW, h: pageH } = current.pageSize
         const base = { action: 'add_shape', path: current.path, page: current.page, kind }
+        const land = (state) => {
+          // select it straight away: the handles should be there without a second click
+          if (state && state.detail) {
+            setDoc(state)
+            setSelected(state.detail.id)
+          }
+        }
         if (kind === 'text') {
-          runOp({ ...base, x: 0.6, y: pageH - 1.2, w: Math.max(2, pageW - 1.2), h: 0.7, text: t('textShape') })
+          const spot = freeSpot(current, Math.max(2, pageW - 1.2), 0.7)
+          runOp({ ...base, x: spot.x, y: spot.y, w: Math.max(2, pageW - 1.2), h: 0.7, text: t('textShape') }).then(land)
         } else if (kind === 'line') {
-          runOp({ ...base, x: pageW / 2 - 1, y: pageH / 2, w: 2, h: 1.2 })
+          runOp({ ...base, x: pageW / 2 - 1, y: pageH / 2, w: 2, h: 1.2 }).then(land)
         } else {
-          runOp({ ...base, x: pageW / 2 - 0.9, y: pageH / 2 - 0.45, w: 1.8, h: 0.9, text: kind === 'ellipse' ? 'Ellipse' : 'Rectangle' })
+          const spot = freeSpot(current, 1.8, 0.9)
+          runOp({ ...base, x: spot.x, y: spot.y, w: 1.8, h: 0.9,
+            text: kind === 'ellipse' ? 'Ellipse' : 'Rectangle' }).then(land)
         }
       }, [runOp, t])
 

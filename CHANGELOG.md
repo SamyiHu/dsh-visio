@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.22.1 — 2026-11-02
+
+- **A new shape no longer lands on top of the previous one.** Every insert was placed at
+  the exact centre of the page, so clicking 矩形 twice produced two identical boxes stacked
+  on each other: the canvas did not change and the click looked like it had failed. New
+  shapes now cascade to the first free spot on the page.
+- **A new shape is selected immediately**, so its eight handles and the inspector are there
+  without a second click.
+
 ## 1.22.0 — 2026-11-02
 
 - **Resize a shape by its handles.** A selected shape now shows eight scale handles
