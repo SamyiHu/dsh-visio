@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.21.2 — 2026-11-02
+
+Repository hygiene only, no behaviour change.
+
+- The repository root had collected 95 scratch files (throw-away drawings, probe scripts,
+  screenshots), 40 of which had been committed by accident, plus 40 `*.bak-*` backup copies.
+  All of them are gone; the root now holds only project files.
+- `.gitignore` is regrouped and refuses anything matching `/_*`, so a probe script or a
+  screenshot dropped in the root can never be committed again. Scratch output belongs in
+  `tests/_out/`, which is ignored.
+
 ## 1.21.1 — 2026-11-02
 
 - **The background grid did not scale with the shapes.** The cell size was a fixed
