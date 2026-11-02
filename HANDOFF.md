@@ -161,6 +161,9 @@ C:\Users\SOC\.dsh\profiles\desktop\node_modules\electron\dist
 - 敏感信息不入库：不要出现 `C:\Users\SOC` 路径、真实业务图纸
 - 术语：报告里用「异常」，不用「必改」
 - 平时不改 `package.json` 版本号，只在准备发布时改
+- **临时文件不许放仓库根目录**：调试脚本、样例图纸、截图一律放 `tests/_out/`（已忽略）；
+  根目录 `/_*` 已在 `.gitignore` 里禁用，`*.bak-*` 备份永不提交。2026-11-02 清理过一次
+  （根目录 95 个临时文件、其中 40 个曾被误提交，commit 466a078）。
 
 ## 9. 完成标准
 

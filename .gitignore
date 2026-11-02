@@ -1,13 +1,20 @@
 node_modules/
-_tmp/
-_tools/
-*.bak-*
 __pycache__/
 *.pyc
-examples/*.png
+
+# Scratch work never belongs in the repository root: probe scripts, throw-away
+# drawings and screenshots go under tests/_out/ (ignored) instead.
+/_*
+
+# Backup copies the editor writes next to a file (*.bak-YYYYMMDD-HHMMSS-mmm)
+*.bak-*
 _electron-install.log
+
+# Generated test output
+tests/_out/
 tests/_uicheck.html
+_uicheck.html
 tests/vendor/
 tests/fixtures/_live.vsdx
-_uicheck.html
-tests/_out/
+
+examples/*.png
