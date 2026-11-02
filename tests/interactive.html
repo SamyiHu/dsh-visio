@@ -273,6 +273,9 @@ window.runSpec = async function runSpec() {
     check('dot drag leaves both ends where they were', same2, beforeDot + ' -> ' + pathOf())
 
     // ---- 4. dragging a red end re-glues it to the shape under the cursor --
+    // The earlier gestures reshaped this connector; put it back on the router so
+    // the end handles sit on predictable ports.
+    await window.harness.resetRoute(CONN)
     await window.harness.clickShape(CONN)
     await new Promise((r) => setTimeout(r, 600))
     const endBox = window.harness.centreOf('[data-route-end]', 1)
@@ -401,6 +404,65 @@ window.runSpec = async function runSpec() {
         check('the new connector is glued to the two dots',
           !!cop && !!cop.from_port && !!cop.to_port, JSON.stringify(cop && { f: cop.from_port, t: cop.to_port }))
         await new Promise((r) => setTimeout(r, 600))
+      }
+    }
+
+    // ---- 10. resize + rotate handles on a normal shape ------------------------
+    {
+      const plain = (window.__STATE__.shapes || []).filter((s) => !s.connector && !s.line)
+      // the last shape was never touched by the earlier gestures, so its handles
+      // are exactly where its bbox says they are
+      const target = plain[plain.length - 1]
+      await window.harness.clickShape(target.id)
+      await new Promise((r) => setTimeout(r, 700))
+      check('a selected shape shows eight scale handles',
+        document.querySelectorAll('[data-resize]').length === 8,
+        String(document.querySelectorAll('[data-resize]').length))
+      check('a selected shape shows a rotate handle',
+        document.querySelectorAll('[data-rotate]').length === 1,
+        String(document.querySelectorAll('[data-rotate]').length))
+
+      const before = { ...target.bbox }
+      const se = document.querySelector('[data-resize="' + target.id + ':se"]')
+      if (se) {
+        const rb = se.getBoundingClientRect()
+        const from = { x: rb.left + rb.width / 2, y: rb.top + rb.height / 2 }
+        window.harness.clearOps()
+        const el = document.elementFromPoint(from.x, from.y)
+        el.dispatchEvent(new PointerEvent('pointerdown', { clientX: from.x, clientY: from.y, button: 0, buttons: 1, bubbles: true, cancelable: true, pointerId: 1, pointerType: 'mouse' }))
+        for (let i = 1; i <= 6; i += 1) {
+          window.dispatchEvent(new PointerEvent('pointermove', { clientX: from.x + 40 * i / 6, clientY: from.y + 30 * i / 6, buttons: 1, bubbles: true, pointerId: 1, pointerType: 'mouse' }))
+        }
+        check('resizing previews the new box', !!document.querySelector('#dshv-box-preview'), 'preview')
+        window.dispatchEvent(new PointerEvent('pointerup', { clientX: from.x + 40, clientY: from.y + 30, button: 0, bubbles: true, pointerId: 1, pointerType: 'mouse' }))
+        await new Promise((r) => setTimeout(r, 900))
+        const op = lastOp('move')
+        check('dragging a corner handle resizes the shape',
+          !!op && op.w > before.w + 0.1 && op.h > before.h + 0.05,
+          JSON.stringify(op && { w: op.w, h: op.h, before: { w: before.w, h: before.h } }))
+      }
+
+      await window.harness.clickShape(target.id)
+      await new Promise((r) => setTimeout(r, 600))
+      const rot = document.querySelector('[data-rotate="' + target.id + '"]')
+      if (rot) {
+        const rb = rot.getBoundingClientRect()
+        const from = { x: rb.left + rb.width / 2, y: rb.top + rb.height / 2 }
+        window.harness.clearOps()
+        const el = document.elementFromPoint(from.x, from.y)
+        el.dispatchEvent(new PointerEvent('pointerdown', { clientX: from.x, clientY: from.y, button: 0, buttons: 1, bubbles: true, cancelable: true, pointerId: 1, pointerType: 'mouse' }))
+        for (let i = 1; i <= 6; i += 1) {
+          window.dispatchEvent(new PointerEvent('pointermove', { clientX: from.x + 70 * i / 6, clientY: from.y + 50 * i / 6, buttons: 1, bubbles: true, pointerId: 1, pointerType: 'mouse' }))
+        }
+        window.dispatchEvent(new PointerEvent('pointerup', { clientX: from.x + 70, clientY: from.y + 50, button: 0, bubbles: true, pointerId: 1, pointerType: 'mouse' }))
+        await new Promise((r) => setTimeout(r, 900))
+        const op = lastOp('move')
+        check('dragging the rotate handle sets an angle',
+          !!op && typeof op.angle === 'number' && Math.abs(op.angle) > 5,
+          JSON.stringify(op && { angle: op.angle }))
+        check('the rotated shape is painted rotated',
+          /rotate\(/.test(String(document.querySelector('[data-shape-id="' + target.id + '"]').getAttribute('transform'))),
+          String(document.querySelector('[data-shape-id="' + target.id + '"]').getAttribute('transform')))
       }
     }
 
@@ -547,9 +609,11 @@ window.harness = {
     await window.harness.clickShape(shapeId)
     await new Promise((r) => setTimeout(r, 600))
     const ends = document.querySelectorAll('[data-route-end]')
-    const rect = ends[endIndex] && ends[endIndex].querySelector('rect')
-    if (!rect) return { error: 'no end handle' }
-    const rb = rect.getBoundingClientRect()
+    // an end handle is a round dot now, but stay compatible with the old square
+    const dot = ends[endIndex]
+      && (ends[endIndex].querySelector('circle') || ends[endIndex].querySelector('rect'))
+    if (!dot) return { error: 'no end handle' }
+    const rb = dot.getBoundingClientRect()
     const from = { x: rb.left + rb.width / 2, y: rb.top + rb.height / 2 }
     const svg = window.harness.svg()
     const box = svg.getBoundingClientRect()
@@ -584,7 +648,8 @@ window.harness = {
     const op = window.__OPS__.filter((o) => o.action === 'reglue').slice(-1)[0]
     const committed = op ? [op.x, op.y] : null
     const afterEnds = document.querySelectorAll('[data-route-end]')
-    const ar = afterEnds[endIndex] && afterEnds[endIndex].querySelector('rect')
+    const ar = afterEnds[endIndex]
+      && (afterEnds[endIndex].querySelector('circle') || afterEnds[endIndex].querySelector('rect'))
     let landed = null
     if (ar) {
       const b2 = ar.getBoundingClientRect()
@@ -599,6 +664,18 @@ window.harness = {
       markerMatchesCommit: close(markerSheet, committed, 0.02),
       landedOnMarker: close(landed, markerSheet, 0.02),
     }
+  },
+  /** Clear a hand-drawn route so the connector falls back to the router. */
+  resetRoute: async (id) => {
+    const st = window.__STATE__
+    if (!st) return false
+    await fetch('/dsh-visio/op', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'clear_route', path: st.path, page: st.page || 1, shape_id: id }),
+    })
+    await new Promise((r) => setTimeout(r, 500))
+    return true
   },
   pageH: () => {
     const st = window.__STATE__

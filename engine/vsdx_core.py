@@ -238,6 +238,14 @@ class Vsdx:
         except (TypeError, ValueError):
             return []
 
+    @staticmethod
+    def _angle(sh):
+        """Rotation of a shape in degrees, counter-clockwise (Visio convention)."""
+        try:
+            return float(_cellv(sh, "Angle") or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
     def ports(self, sh, ox: float, oy: float):
         """The connection points a connector end may glue to, in sheet coordinates.
 
@@ -326,6 +334,9 @@ class Vsdx:
                            else (self.drawn_points(sh.get("ID"), page) if is_connector
                                  else (self._line_points(sh) if is_line else []))),
                 "connects": connects.get(sh.get("ID"), []),
+                # Rotation in degrees, counter-clockwise like Visio.  It used to be
+                # dropped on the floor: the panel could not show or set it.
+                "angle": round(self._angle(sh), 4),
                 # The points a connector end may land on, in sheet coordinates.
                 # The panel used to guess four bbox midpoints, which disagree with
                 # the real Connection rows whenever a shape has them, so the drop
@@ -439,8 +450,12 @@ class Vsdx:
                 return True
         raise VsdxError("shape %s not found on page %d" % (shape_id, page))
 
-    def move_shape(self, shape_id, x=None, y=None, w=None, h=None, page: int = 1):
-        """Move / resize by bounding box (inches, origin bottom-left)."""
+    def move_shape(self, shape_id, x=None, y=None, w=None, h=None, angle=None,
+                   page: int = 1):
+        """Move / resize / rotate by bounding box (inches, origin bottom-left).
+
+        `angle` is in degrees, counter-clockwise like Visio.
+        """
         det = self.shape(shape_id, page)
         cells = det["cells"]
         meta = next((sh for sh in self.shapes(page) if sh["id"] == str(shape_id)), None)
@@ -484,6 +499,8 @@ class Vsdx:
             "PinX": round(nx + nw / 2.0, 6),
             "PinY": round(ny + nh / 2.0, 6),
         }
+        if angle is not None:
+            update["Angle"] = round(float(angle) % 360.0, 6)
         return self.set_cells(shape_id, update, page)
 
     def move_label(self, shape_id, dx=0.0, dy=0.0, page: int = 1):
@@ -2157,6 +2174,17 @@ class Vsdx:
                 continue
             x = bb["x"]
             y = H - bb["y"] - bb["h"]
+            # Rotation lives in the Angle cell and used to be ignored by the
+            # renderer, so a rotated shape in a real drawing came out upright.
+            ang = s.get("angle") or 0.0
+            if ang:
+                _cx = bb["x"] + bb["w"] / 2.0
+                _cy = H - (bb["y"] + bb["h"] / 2.0)
+                _rot = ' transform="rotate(%0.4f %0.4f %0.4f)"' % (-ang, _cx, _cy)
+                out.append('<g data-shape-id="%s"%s>' % (_esc(s["id"]), _rot) if interactive
+                           else '<g%s>' % _rot)
+            else:
+                out.append(open_group(s["id"]))
             st = self.style(s["id"], page)
             cells = self.shape(s["id"], page)["cells"]
             fill = st.get("fill") or "#FFFFFF"
@@ -2170,7 +2198,6 @@ class Vsdx:
             fill_op = max(0.0, min(1.0, fill_op))
             pattern = str(st.get("pattern") or "1")
             paths = self.geometry_paths(s["id"], page)
-            out.append(open_group(s["id"]))
             if paths and pattern == "0":
                 out.append('<rect x="%0.3f" y="%0.3f" width="%0.3f" height="%0.3f" fill="transparent" stroke="none"/>'
                            % (x, y, bb["w"], bb["h"]))

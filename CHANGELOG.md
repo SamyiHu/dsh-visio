@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.22.0 — 2026-11-02
+
+- **Resize a shape by its handles.** A selected shape now shows eight scale handles
+  (four corners, four edges). Dragging one rewrites Width/Height and keeps the opposite
+  edge anchored; Shift on a corner keeps the aspect ratio; a dashed box previews the
+  result while dragging.
+- **Rotation.** A knob above the shape sets the Angle cell (Shift snaps to 15°), the value
+  is editable in the inspector, and the renderer now applies it — the Angle cell used to be
+  ignored, so a rotated shape in a real drawing came out upright.
+- **Connector ends are round dots**, not red squares: an end is a point you drop on a port,
+  not a shape handle.
+- Browser harness: 30 assertions (+6) covering the handles, resizing and rotation.
+
 ## 1.21.2 — 2026-11-02
 
 Repository hygiene only, no behaviour change.

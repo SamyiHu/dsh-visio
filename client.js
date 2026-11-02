@@ -10,7 +10,7 @@ window.__ModuleLoader__.load({
     const PANEL_ID = 'dsh-visio'
     const POLL_MS = 2500
     // Bumped with every release: the footer shows it, so a stale bundle is obvious.
-    const CLIENT_BUILD = '1.21.2'
+    const CLIENT_BUILD = '1.22.0'
 
     /* ------------------------------------------------------------- locale */
 
@@ -41,6 +41,7 @@ window.__ModuleLoader__.load({
       geometry: '位置与大小',
       outOfPage: '已超出页面范围',
       lineKind: '直线',
+      rotation: '旋转 °',
       lineToolOn: '直线工具：在画布上按住拖动画一条线',
       lineToolOff: '已退出直线工具',
       lineDrawn: '已画一条直线',
@@ -174,6 +175,7 @@ window.__ModuleLoader__.load({
       geometry: 'Position and size',
       outOfPage: 'Outside the page',
       lineKind: 'Line',
+      rotation: 'Rotation °',
       lineToolOn: 'Line tool: drag on the canvas to draw a line',
       lineToolOff: 'Line tool off',
       lineDrawn: 'Line drawn',
@@ -654,9 +656,11 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           const [ex, ey] = pts[idx]
           // an end handle must stay visible at any zoom, so its outline is drawn in
           // screen pixels and it is bigger than the segment dots
+          // A connector end is a point, not a box: a round dot says "grab me and
+          // drop me on a port", a square reads like a shape handle.
           handles += '<g data-route-end="' + shape.id + '" data-end="' + tag + '" style="cursor:pointer">'
-            + '<rect x="' + (ex - 0.13) + '" y="' + (pageHeight - ey - 0.13) + '" width="0.26" height="0.26"'
-            + ' rx="0.03" fill="#E5484D" fill-opacity="0.95" stroke="#FFFFFF" stroke-width="2"'
+            + '<circle cx="' + ex + '" cy="' + (pageHeight - ey) + '" r="0.115"'
+            + ' fill="#E5484D" fill-opacity="0.95" stroke="#FFFFFF" stroke-width="2"'
             + ' vector-effect="non-scaling-stroke"/></g>'
         }
         for (let i = 0; i < pts.length - 1; i += 1) {
@@ -705,10 +709,44 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           + '<path d="' + b + '" stroke="#8A94A6" stroke-width="1.2" vector-effect="non-scaling-stroke" fill="none"/>'
           + '</g>'
       }).join('')
-      const tag = '<g data-shape-id="' + shape.id + '">'
-      const at = svg.indexOf(tag)
+      // Eight scale handles plus one rotate handle: without them a shape could only
+      // be moved and resized through the numeric fields on the right.
+      const midX = box.x + box.w / 2
+      const midY = top + box.h / 2
+      const corner = (dir, hx, hy, cursor) => '<g data-resize="' + shape.id + ':' + dir + '" style="cursor:' + cursor + '">'
+        + '<rect x="' + (hx - 0.05) + '" y="' + (hy - 0.05) + '" width="0.1" height="0.1"'
+        + ' fill="#FFFFFF" stroke="#2F6FBF" stroke-width="1.5" vector-effect="non-scaling-stroke"/></g>'
+      const handles = [
+        corner('nw', box.x, top, 'nwse-resize'),
+        corner('n', midX, top, 'ns-resize'),
+        corner('ne', box.x + box.w, top, 'nesw-resize'),
+        corner('w', box.x, midY, 'ew-resize'),
+        corner('e', box.x + box.w, midY, 'ew-resize'),
+        corner('sw', box.x, top + box.h, 'nesw-resize'),
+        corner('s', midX, top + box.h, 'ns-resize'),
+        corner('se', box.x + box.w, top + box.h, 'nwse-resize'),
+        // rotate handle hangs off the top edge, on a short stem
+        '<line x1="' + midX + '" y1="' + (top - 0.06) + '" x2="' + midX + '" y2="' + (top - 0.56) + '"'
+        + ' stroke="#2F6FBF" stroke-width="1" vector-effect="non-scaling-stroke" pointer-events="none"/>',
+        '<g data-rotate="' + shape.id + '" style="cursor:grab">'
+        + '<circle cx="' + midX + '" cy="' + (top - 0.62) + '" r="0.085" fill="#FFFFFF"'
+        + ' stroke="#2F6FBF" stroke-width="1.5" vector-effect="non-scaling-stroke"/></g>',
+      ].join('')
+      // The group may carry a transform (rotation), so match the opening tag
+      // instead of the exact string '<g data-shape-id="N">'.
+      const marker = '<g data-shape-id="' + shape.id + '"'
+      const at = svg.indexOf(marker)
       if (at < 0) return svg
-      return svg.slice(0, at + tag.length) + rect + guides + svg.slice(at + tag.length)
+      const end = svg.indexOf('>', at)
+      if (end < 0) return svg
+      // Append at the END of the group: the shape's own path is painted first, so
+      // handles inserted at the start ended up underneath it and never got the
+      // pointerdown (dragging a corner moved the whole shape instead).
+      const close = svg.indexOf('</g>', end)
+      if (close < 0) return svg
+      // guides first, handles last: the rotate knob sits right where the top guide
+      // arrow used to be, and the arrow was stealing its clicks.
+      return svg.slice(0, close) + rect + guides + handles + svg.slice(close)
     }
 
     const LAST_DOC = 'dshv:lastDoc'
@@ -1512,7 +1550,6 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           window.addEventListener('pointerup', up)
           return
         }
-        // ---- draw a line: press, drag, release (Shift keeps it straight) -------
         const sheetOf = (current, svgEl, cx, cy) => {
           const box = svgEl.getBoundingClientRect()
           const vb = svgEl.viewBox && svgEl.viewBox.baseVal ? svgEl.viewBox.baseVal : null
@@ -1523,6 +1560,26 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
             pt: { x: vb.x + (cx - box.left) / scale, y: pageH - vb.y - (cy - box.top) / scale },
             scale, pageH, vb,
           }
+        }
+        /** Dashed rectangle that follows a resize drag (the svg is server-rendered). */
+        const previewBox = (svgEl, box, pageH) => {
+          const nsx = 'http://www.w3.org/2000/svg'
+          let el = svgEl.querySelector('#dshv-box-preview')
+          if (!el) {
+            el = document.createElementNS(nsx, 'rect')
+            el.setAttribute('id', 'dshv-box-preview')
+            el.setAttribute('fill', 'none')
+            el.setAttribute('stroke', '#2F6FBF')
+            el.setAttribute('stroke-dasharray', '4 3')
+            el.setAttribute('vector-effect', 'non-scaling-stroke')
+            el.setAttribute('pointer-events', 'none')
+            svgEl.appendChild(el)
+          }
+          el.setAttribute('x', Number(box.x).toFixed(4))
+          el.setAttribute('y', Number(pageH - box.y - box.h).toFixed(4))
+          el.setAttribute('width', Number(box.w).toFixed(4))
+          el.setAttribute('height', Number(box.h).toFixed(4))
+          el.style.display = ''
         }
         const previewLine = (svgEl, id, a, b, pageH, color) => {
           let el = svgEl.querySelector('#' + id)
@@ -1539,6 +1596,112 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           el.setAttribute('x1', a.x.toFixed(4)); el.setAttribute('y1', (pageH - a.y).toFixed(4))
           el.setAttribute('x2', b.x.toFixed(4)); el.setAttribute('y2', (pageH - b.y).toFixed(4))
           el.style.display = ''
+        }
+        // ---- resize a shape from one of its eight handles ----------------------
+        const resizeHandle = event.target instanceof Element ? event.target.closest('[data-resize]') : null
+        if (resizeHandle) {
+          event.preventDefault()
+          event.stopPropagation()
+          const current = docRef.current
+          const svgEl = event.currentTarget.querySelector('svg')
+          const [id, dir] = String(resizeHandle.getAttribute('data-resize')).split(':')
+          const item = current && (current.shapes || []).find((s) => s.id === id)
+          const hit = current && svgEl ? sheetOf(current, svgEl, event.clientX, event.clientY) : null
+          if (!item || !hit || !svgEl) return
+          const b0 = { ...item.bbox }
+          const start = { x: event.clientX, y: event.clientY }
+          let box = { ...b0 }
+          const move = (e) => {
+            const dx = (e.clientX - start.x) / hit.scale
+            const dy = -(e.clientY - start.y) / hit.scale
+            let x = b0.x; let y = b0.y; let w = b0.w; let h = b0.h
+            if (dir.includes('e')) w = b0.w + dx
+            if (dir.includes('w')) { x = b0.x + dx; w = b0.w - dx }
+            if (dir.includes('n')) h = b0.h + dy
+            if (dir.includes('s')) { y = b0.y + dy; h = b0.h - dy }
+            w = Math.max(0.12, w)
+            h = Math.max(0.12, h)
+            if (e.shiftKey && dir.length === 2) {
+              // Shift keeps the aspect ratio on a corner handle
+              const k = Math.max(w / b0.w, h / b0.h)
+              w = b0.w * k
+              h = b0.h * k
+              if (dir.includes('w')) x = b0.x + b0.w - w
+              if (dir.includes('s')) y = b0.y + b0.h - h
+            }
+            box = { x, y, w, h }
+            previewBox(svgEl, box, hit.pageH)
+            const tip = tipRef.current
+            if (tip && tip.parentElement) {
+              const host = tip.parentElement.getBoundingClientRect()
+              tip.style.display = 'block'
+              tip.style.left = `${e.clientX - host.left + 14}px`
+              tip.style.top = `${e.clientY - host.top - 30}px`
+              tip.textContent = `${box.w.toFixed(2)} × ${box.h.toFixed(2)} in`
+            }
+          }
+          const up = () => {
+            window.removeEventListener('pointermove', move)
+            window.removeEventListener('pointerup', up)
+            const el = svgEl.querySelector('#dshv-box-preview')
+            if (el) el.remove()
+            if (tipRef.current) tipRef.current.style.display = 'none'
+            if (Math.abs(box.w - b0.w) < 0.005 && Math.abs(box.h - b0.h) < 0.005) return
+            runOp({ action: 'move', path: current.path, page: current.page, shape_id: id,
+              x: box.x, y: box.y, w: box.w, h: box.h })
+              .then((state) => { if (state) setDoc(state) })
+          }
+          window.addEventListener('pointermove', move)
+          window.addEventListener('pointerup', up)
+          return
+        }
+        // ---- rotate a shape ---------------------------------------------------
+        const rotateHandle = event.target instanceof Element ? event.target.closest('[data-rotate]') : null
+        if (rotateHandle) {
+          event.preventDefault()
+          event.stopPropagation()
+          const current = docRef.current
+          const svgEl = event.currentTarget.querySelector('svg')
+          const id = rotateHandle.getAttribute('data-rotate')
+          const item = current && (current.shapes || []).find((s) => s.id === id)
+          const hit = current && svgEl ? sheetOf(current, svgEl, event.clientX, event.clientY) : null
+          if (!item || !hit || !svgEl) return
+          const cx = item.bbox.x + item.bbox.w / 2
+          const cy = item.bbox.y + item.bbox.h / 2
+          const cxSvg = cx
+          const cySvg = hit.pageH - cy
+          const a0 = Math.atan2(hit.pt.y - cy, hit.pt.x - cx) * 180 / Math.PI
+          const base0 = item.angle || 0
+          const node = svgEl.querySelector('[data-shape-id="' + id + '"]')
+          let deg = base0
+          const move = (e) => {
+            const p = sheetOf(current, svgEl, e.clientX, e.clientY)
+            if (!p) return
+            const a1 = Math.atan2(p.pt.y - cy, p.pt.x - cx) * 180 / Math.PI
+            deg = base0 + (a1 - a0)
+            if (e.shiftKey) deg = Math.round(deg / 15) * 15
+            deg = ((deg % 360) + 360) % 360
+            if (node) node.setAttribute('transform', `rotate(${(-deg).toFixed(4)} ${cxSvg} ${cySvg})`)
+            const tip = tipRef.current
+            if (tip && tip.parentElement) {
+              const host = tip.parentElement.getBoundingClientRect()
+              tip.style.display = 'block'
+              tip.style.left = `${e.clientX - host.left + 14}px`
+              tip.style.top = `${e.clientY - host.top - 30}px`
+              tip.textContent = `${deg.toFixed(1)}°`
+            }
+          }
+          const up = () => {
+            window.removeEventListener('pointermove', move)
+            window.removeEventListener('pointerup', up)
+            if (tipRef.current) tipRef.current.style.display = 'none'
+            if (Math.abs(deg - base0) < 0.2) return
+            runOp({ action: 'move', path: current.path, page: current.page, shape_id: id, angle: deg })
+              .then((state) => { if (state) setDoc(state) })
+          }
+          window.addEventListener('pointermove', move)
+          window.addEventListener('pointerup', up)
+          return
         }
         if (tool === 'line') {
           event.preventDefault()
@@ -2347,6 +2510,10 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
                 h(NumberField, { label: t('y'), value: bbox.y, onCommit: (y) => onCommitMove(clampBox({ y })) }),
                 h(NumberField, { label: t('width'), value: bbox.w, onCommit: (w) => onCommitMove(clampBox({ w })) }),
                 h(NumberField, { label: t('height'), value: bbox.h, onCommit: (h) => onCommitMove(clampBox({ h })) })),
+          linePts ? null : h('div', { className: 'dshv-grid4', style: { marginTop: 6 } },
+            h(NumberField, { label: t('rotation'), value: shape.angle || 0, step: 15,
+              onCommit: (v) => onCommitMove({ angle: v }) }),
+            h('div'), h('div'), h('div')),
           outOfPage
             ? h('div', { className: 'dshv-warn' },
                 h('span', null, t('outOfPage')),

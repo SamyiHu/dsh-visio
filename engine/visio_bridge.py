@@ -416,7 +416,7 @@ def action_move(req):
     page = page_of(req.get("page"), doc.pages)
     sid = text(req.get("shape_id"), "shape_id", 40)
     kwargs = {}
-    for key in ("x", "y", "w", "h"):
+    for key in ("x", "y", "w", "h", "angle"):
         if req.get(key) is not None:
             kwargs[key] = number(req.get(key), key)
     if not kwargs:
