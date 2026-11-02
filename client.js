@@ -40,6 +40,12 @@ window.__ModuleLoader__.load({
       textPlaceholder: '形状文字（支持多行）',
       geometry: '位置与大小',
       outOfPage: '已超出页面范围',
+      lineKind: '直线',
+      lineToolOn: '直线工具：在画布上按住拖动画一条线',
+      lineToolOff: '已退出直线工具',
+      lineDrawn: '已画一条直线',
+      linkFromPort: '已选起点，拖到另一个图形完成连线',
+      connectHint: '从图形边上的圆点拖到另一个图形即可连线',
       occlusion: '遮挡',
       route: '走线',
       routeHint: '拖动线上的蓝色手柄：横线上下移、竖线左右移，端点不动',
@@ -167,6 +173,12 @@ window.__ModuleLoader__.load({
       textPlaceholder: 'Shape text (multi-line)',
       geometry: 'Position and size',
       outOfPage: 'Outside the page',
+      lineKind: 'Line',
+      lineToolOn: 'Line tool: drag on the canvas to draw a line',
+      lineToolOff: 'Line tool off',
+      lineDrawn: 'Line drawn',
+      linkFromPort: 'Start point set, drag to another shape',
+      connectHint: 'Drag from a dot on a shape edge to another shape to connect',
       occlusion: 'Occlusion',
       route: 'Routing',
       routeHint: 'Drag the blue handles: a horizontal run moves up/down, a vertical one moves sideways; the ends stay put',
@@ -307,6 +319,7 @@ window.__ModuleLoader__.load({
 
     function shapeKindLabel(shape, t) {
       if (shape.connector) return t('connector')
+      if (shape.line) return t('lineKind')
       if (!shape.geometry || shape.geometry.length === 0) return t('textShape')
       if (shape.geometry.some((g) => String(g).includes('Ellipse'))) return 'Ellipse'
       if (shape.master) return shape.master
@@ -588,6 +601,31 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
   /* ----------------------------------------------------------------- panel */
 
     function withSelection(svg, shape, pageHeight) {
+      // A line is a 1-D shape: it gets two end dots and nothing else.  Drawing the
+      // usual dashed box plus eight scale handles around it was the giveaway that a
+      // line was being treated as a rectangle with a diagonal inside.
+      if (svg && shape && shape.line && shape.bbox) {
+        const pts = (shape.points && shape.points.length >= 2) ? shape.points
+          : [[shape.bbox.x, shape.bbox.y], [shape.bbox.x + shape.bbox.w, shape.bbox.y + shape.bbox.h]]
+        const [ax, ay] = pts[0]
+        const [bx, by] = pts[pts.length - 1]
+        let handles = ''
+        handles += '<line x1="' + ax + '" y1="' + (pageHeight - ay) + '" x2="' + bx + '" y2="' + (pageHeight - by) + '"'
+          + ' stroke="transparent" stroke-width="14" vector-effect="non-scaling-stroke"'
+          + ' data-line-body="' + shape.id + '" style="cursor:move" pointer-events="stroke"/>'
+        for (const [tag, pt] of [['start', [ax, ay]], ['end', [bx, by]]]) {
+          handles += '<g data-line-end="' + shape.id + '" data-end="' + tag + '" style="cursor:crosshair">'
+            + '<circle cx="' + pt[0] + '" cy="' + (pageHeight - pt[1]) + '" r="0.1"'
+            + ' fill="#2F6FBF" fill-opacity="0.95" stroke="#FFFFFF" stroke-width="2"'
+            + ' vector-effect="non-scaling-stroke"/></g>'
+        }
+        // a short tick at the middle so a selected line is obvious
+        handles += '<circle cx="' + ((ax + bx) / 2) + '" cy="' + (pageHeight - (ay + by) / 2) + '" r="0.05"'
+          + ' fill="#2F6FBF" fill-opacity="0.6" pointer-events="none"/>'
+        const cut = svg.lastIndexOf('</svg>')
+        if (cut < 0) return svg
+        return svg.slice(0, cut) + handles + svg.slice(cut)
+      }
       // Connector bounding boxes span their endpoints; a box around them would
       // cover half the page.  They get a stroke highlight instead (see CSS).
       if (svg && shape && shape.connector && shape.bbox) {
@@ -948,6 +986,12 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         runOp({ action: 'move', path: current.path, page: current.page, shape_id: selectedRef.current, ...geometry })
       }, [runOp])
 
+      const commitLine = useCallback((start, end) => {
+        const current = docRef.current
+        if (!current || !selectedRef.current) return
+        runOp({ action: 'set_line', path: current.path, page: current.page, shape_id: selectedRef.current, start, end })
+      }, [runOp])
+
       const addShape = useCallback((kind) => {
         const current = docRef.current
         if (!current) return
@@ -1145,16 +1189,36 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
 
       const SNAP = 0.35           // inches; about one grid cell at 100% zoom
 
+      // Four connection points of a box, in sheet coordinates.  The engine ships the
+      // real Connection rows when a shape has them; the side midpoints are the
+      // fallback Visio itself uses.
+      const portsOf = (item) => {
+        if (!item) return []
+        if (item.ports && item.ports.length) return item.ports
+        const b = item.bbox
+        if (!b) return []
+        return [
+          [b.x, b.y + b.h / 2],
+          [b.x + b.w, b.y + b.h / 2],
+          [b.x + b.w / 2, b.y],
+          [b.x + b.w / 2, b.y + b.h],
+        ]
+      }
+
       const snapEdges = (bbox, shapes, id) => {
         const xs = []
         const ys = []
+        const ports = []
         for (const other of (shapes || [])) {
-          if (other.id === id || other.connector || !other.bbox) continue
+          if (other.id === id || other.connector || other.line || !other.bbox) continue
           const o = other.bbox
           xs.push(o.x, o.x + o.w, o.x + o.w / 2)
           ys.push(o.y, o.y + o.h, o.y + o.h / 2)
+          // Connection points are a second pair of alignment dimensions on top of
+          // the box edges: their x lines up vertically, their y horizontally.
+          for (const p of portsOf(other)) ports.push({ x: p[0], y: p[1], id: other.id })
         }
-        return { xs, ys }
+        return { xs, ys, ports }
       }
 
       const nearest = (value, list) => {
@@ -1200,29 +1264,73 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         drag.moved = true
         drag.dx = dxPx / drag.scale
         drag.dy = dyPx / drag.scale
-        // alignment snapping: edges and centre lines of the other shapes win
+        // Alignment snapping, in two tiers.
+        //
+        // Tier 1 (new) is connection points: when one of this box's ports lands on
+        // the same x or the same y as a port of another shape, the box sticks there
+        // and a blue guide joins the two ports.  That is what makes a pair of boxes
+        // line up so the connector between them comes out perfectly straight.
+        // Tier 2 (unchanged) is the box edges and centre lines, drawn in red.
         if (!drag.isConn && drag.cands) {
           const b = drag.bbox
+          drag.portX = null
+          drag.portY = null
+          if (!event.altKey && drag.cands.ports && drag.cands.ports.length) {
+            const ownPorts = (tx, ty) => ([
+              [tx, ty + b.h / 2], [tx + b.w, ty + b.h / 2],
+              [tx + b.w / 2, ty], [tx + b.w / 2, ty + b.h],
+            ])
+            let bestX = null
+            let bestY = null
+            for (const own of ownPorts(b.x + drag.dx, b.y - drag.dy)) {
+              for (const p of drag.cands.ports) {
+                const dX = Math.abs(p.x - own[0])
+                if (dX <= SNAP && (!bestX || dX < bestX.d)) {
+                  bestX = { d: dX, shift: p.x - own[0], from: own[1], to: p.y, at: p.x }
+                }
+                const dY = Math.abs(p.y - own[1])
+                if (dY <= SNAP && (!bestY || dY < bestY.d)) {
+                  bestY = { d: dY, shift: p.y - own[1], from: own[0], to: p.x, at: p.y }
+                }
+              }
+            }
+            if (bestX) {
+              drag.dx += bestX.shift
+              drag.portX = { at: bestX.at, from: bestX.from, to: bestX.to }
+            }
+            if (bestY) {
+              drag.dy -= bestY.shift
+              drag.portY = { at: bestY.at, from: bestY.from, to: bestY.to }
+            }
+          }
           const nx = b.x + drag.dx
           const ny = b.y - drag.dy
-          const leftHit = nearest(nx, drag.cands.xs)
-          const rightHit = nearest(nx + b.w, drag.cands.xs)
-          const centreXHit = nearest(nx + b.w / 2, drag.cands.xs)
-          if (leftHit !== null) drag.dx = leftHit - b.x
-          else if (rightHit !== null) drag.dx = rightHit - b.w - b.x
-          else if (centreXHit !== null) drag.dx = centreXHit - b.w / 2 - b.x
-          const topHit = nearest(ny + b.h, drag.cands.ys)
-          const bottomHit = nearest(ny, drag.cands.ys)
-          const centreYHit = nearest(ny + b.h / 2, drag.cands.ys)
-          if (topHit !== null) drag.dy = b.y + b.h - topHit
-          else if (bottomHit !== null) drag.dy = b.y - bottomHit
-          else if (centreYHit !== null) drag.dy = b.y + b.h / 2 - centreYHit
+          // tier 2 only fills the axis tier 1 left free, so the two never fight
+          const leftHit = drag.portX ? null : nearest(nx, drag.cands.xs)
+          const rightHit = drag.portX ? null : nearest(nx + b.w, drag.cands.xs)
+          const centreXHit = drag.portX ? null : nearest(nx + b.w / 2, drag.cands.xs)
+          if (!drag.portX) {
+            if (leftHit !== null) drag.dx = leftHit - b.x
+            else if (rightHit !== null) drag.dx = rightHit - b.w - b.x
+            else if (centreXHit !== null) drag.dx = centreXHit - b.w / 2 - b.x
+          }
+          const topHit = drag.portY ? null : nearest(ny + b.h, drag.cands.ys)
+          const bottomHit = drag.portY ? null : nearest(ny, drag.cands.ys)
+          const centreYHit = drag.portY ? null : nearest(ny + b.h / 2, drag.cands.ys)
+          if (!drag.portY) {
+            if (topHit !== null) drag.dy = b.y + b.h - topHit
+            else if (bottomHit !== null) drag.dy = b.y - bottomHit
+            else if (centreYHit !== null) drag.dy = b.y + b.h / 2 - centreYHit
+          }
           drag.snapped = (leftHit !== null || rightHit !== null || centreXHit !== null
-            || topHit !== null || bottomHit !== null || centreYHit !== null)
-          drag.snapX = (leftHit !== null) ? leftHit : ((rightHit !== null) ? rightHit
-            : ((centreXHit !== null) ? centreXHit : null))
-          drag.snapY = (topHit !== null) ? topHit : ((bottomHit !== null) ? bottomHit
-            : ((centreYHit !== null) ? centreYHit : null))
+            || topHit !== null || bottomHit !== null || centreYHit !== null
+            || drag.portX !== null || drag.portY !== null)
+          drag.snapX = drag.portX ? drag.portX.at
+            : ((leftHit !== null) ? leftHit : ((rightHit !== null) ? rightHit
+              : ((centreXHit !== null) ? centreXHit : null)))
+          drag.snapY = drag.portY ? drag.portY.at
+            : ((topHit !== null) ? topHit : ((bottomHit !== null) ? bottomHit
+              : ((centreYHit !== null) ? centreYHit : null)))
           // nothing aligned: fall back to the 0.25in grid, unless Alt is held
           if (!event.altKey) {
             if (drag.snapX === null) {
@@ -1243,9 +1351,22 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           const svgEl = drag.svg
           if (svgEl) {
             const H = drag.pageH || 0
-            if (drag.snapX !== null) guideLine(svgEl, 'dshv-snap-x', drag.snapX, 0, drag.snapX, H)
+            // A connection-point guide only spans the two ports it joins, which is
+            // what makes it read as "these two points line up" rather than as a
+            // page-wide ruler.
+            if (drag.portX) {
+              guideLine(svgEl, 'dshv-portguide-x', drag.portX.at, H - Math.max(drag.portX.from, drag.portX.to),
+                drag.portX.at, H - Math.min(drag.portX.from, drag.portX.to), '#2F6FBF')
+            } else hideGuide(svgEl, 'dshv-portguide-x')
+            if (drag.portY) {
+              guideLine(svgEl, 'dshv-portguide-y', Math.min(drag.portY.from, drag.portY.to), H - drag.portY.at,
+                Math.max(drag.portY.from, drag.portY.to), H - drag.portY.at, '#2F6FBF')
+            } else hideGuide(svgEl, 'dshv-portguide-y')
+            // A connection-point match already draws its own short blue guide, so the
+            // page-wide red ruler would only clutter it.
+            if (drag.snapX !== null && !drag.portX) guideLine(svgEl, 'dshv-snap-x', drag.snapX, 0, drag.snapX, H)
             else hideGuide(svgEl, 'dshv-snap-x')
-            if (drag.snapY !== null) guideLine(svgEl, 'dshv-snap-y', 0, H - drag.snapY, drag.pageW, H - drag.snapY)
+            if (drag.snapY !== null && !drag.portY) guideLine(svgEl, 'dshv-snap-y', 0, H - drag.snapY, drag.pageW, H - drag.snapY)
             else hideGuide(svgEl, 'dshv-snap-y')
           }
         }
@@ -1280,7 +1401,7 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         if (tipRef.current) tipRef.current.style.display = 'none'
         const svgEl = drag && drag.svg
         if (svgEl) {
-          for (const gid of ['dshv-snap-x', 'dshv-snap-y']) {
+          for (const gid of ['dshv-snap-x', 'dshv-snap-y', 'dshv-portguide-x', 'dshv-portguide-y']) {
             const el = svgEl.querySelector('#' + gid)
             if (el) el.remove()
           }
@@ -1307,31 +1428,66 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         const pageSize = current.pageSize || { w: 11, h: 8.5 }
         const x = Math.round(Math.min(Math.max(0, drag.bbox.x + drag.dx), Math.max(0, pageSize.w - drag.bbox.w)) * 1000) / 1000
         const y = Math.round(Math.min(Math.max(0, drag.bbox.y - drag.dy), Math.max(0, pageSize.h - drag.bbox.h)) * 1000) / 1000
-        // The shape already sits where it was dropped: commit the box locally and
-        // persist in the background, then reconcile the SVG once the file is saved.
-        setDoc((prev) => (prev ? {
-          ...prev,
-          shapes: prev.shapes.map((item) => (item.id === drag.id ? { ...item, bbox: { ...item.bbox, x, y } } : item)),
-        } : prev))
-        runOp(
-          { action: 'move', path: current.path, page: current.page, shape_id: drag.id, x, y, light: true },
-          { quiet: true, light: true },
-        ).then((saved) => {
-          if (!saved) return undefined
-          return postJson(`${ROUTE}/op`, {
-            action: 'render', path: current.path, page: current.page, selected: drag.id,
-          }).then((res) => {
-            if (!res || !res.svg) return
-            setDoc((prev) => (prev ? {
-              ...prev,
-              svg: res.svg,
-              mtime: res.mtime ?? prev.mtime,
-              canUndo: res.canUndo ?? prev.canUndo,
-              canRedo: res.canRedo ?? prev.canRedo,
-              saved: true,
-            } : prev))
-          })
-        }).catch(() => {})
+        // Commit through the normal path so the response carries BOTH the new
+        // geometry and the matching svg.  A previous "light" commit updated only
+        // the shape list and reconciled the picture in a second request: between
+        // the two, handles were placed from the new coordinates into the old
+        // picture, so a handle could sit inches away from the line it belonged to.
+        runOp({ action: 'move', path: current.path, page: current.page,
+          shape_id: drag.id, x, y }).catch(() => {})
+      }
+
+      const hoverRef = useRef(null)
+
+      // Hovering a shape reveals its connection points.  Dragging from one of those
+      // dots to another shape draws a connector between them: one gesture instead of
+      // arming a tool and clicking two shapes.
+      const onCanvasPointerMove = (event) => {
+        const current = docRef.current
+        const svgEl = event.currentTarget.querySelector('svg')
+        if (!current || !svgEl) return
+        if (tool !== 'select') {
+          const stale = svgEl.querySelector('#dshv-ports')
+          if (stale) stale.remove()
+          hoverRef.current = null
+          return
+        }
+        const node = event.target instanceof Element ? event.target.closest('[data-shape-id]') : null
+        const id = node ? node.getAttribute('data-shape-id') : null
+        if (id === hoverRef.current) return
+        hoverRef.current = id
+        const old = svgEl.querySelector('#dshv-ports')
+        if (old) old.remove()
+        const item = id ? (current.shapes || []).find((s) => s.id === id) : null
+        if (!item || item.connector || item.line || !item.bbox) return
+        const pts = portsOf(item)
+        if (!pts.length) return
+        const H = current.pageSize.h
+        const ns = 'http://www.w3.org/2000/svg'
+        const g = document.createElementNS(ns, 'g')
+        g.setAttribute('id', 'dshv-ports')
+        pts.forEach((p, i) => {
+          const c = document.createElementNS(ns, 'circle')
+          c.setAttribute('cx', p[0])
+          c.setAttribute('cy', H - p[1])
+          c.setAttribute('r', '0.07')
+          c.setAttribute('fill', '#2F6FBF')
+          c.setAttribute('fill-opacity', '0.95')
+          c.setAttribute('stroke', '#FFFFFF')
+          c.setAttribute('stroke-width', '2')
+          c.setAttribute('vector-effect', 'non-scaling-stroke')
+          c.setAttribute('data-port', item.id + ':' + i)
+          c.setAttribute('class', 'dshv-portDot')
+          g.appendChild(c)
+        })
+        svgEl.appendChild(g)
+      }
+
+      const onCanvasPointerLeave = (event) => {
+        const svgEl = event.currentTarget.querySelector('svg')
+        hoverRef.current = null
+        const g = svgEl && svgEl.querySelector('#dshv-ports')
+        if (g) g.remove()
       }
 
       const onCanvasPointerDown = (event) => {
@@ -1351,6 +1507,195 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
             panRef.current = null
             window.removeEventListener('pointermove', move)
             window.removeEventListener('pointerup', up)
+          }
+          window.addEventListener('pointermove', move)
+          window.addEventListener('pointerup', up)
+          return
+        }
+        // ---- draw a line: press, drag, release (Shift keeps it straight) -------
+        const sheetOf = (current, svgEl, cx, cy) => {
+          const box = svgEl.getBoundingClientRect()
+          const vb = svgEl.viewBox && svgEl.viewBox.baseVal ? svgEl.viewBox.baseVal : null
+          if (!vb || !box.width) return null
+          const scale = box.width / vb.width
+          const pageH = (current.pageSize && current.pageSize.h) || vb.height
+          return {
+            pt: { x: vb.x + (cx - box.left) / scale, y: pageH - vb.y - (cy - box.top) / scale },
+            scale, pageH, vb,
+          }
+        }
+        const previewLine = (svgEl, id, a, b, pageH, color) => {
+          let el = svgEl.querySelector('#' + id)
+          if (!el) {
+            el = document.createElementNS('http://www.w3.org/2000/svg', 'line')
+            el.setAttribute('id', id)
+            el.setAttribute('stroke-width', '1.5')
+            el.setAttribute('stroke-dasharray', '5 3')
+            el.setAttribute('vector-effect', 'non-scaling-stroke')
+            el.setAttribute('pointer-events', 'none')
+            svgEl.appendChild(el)
+          }
+          el.setAttribute('stroke', color || '#2F6FBF')
+          el.setAttribute('x1', a.x.toFixed(4)); el.setAttribute('y1', (pageH - a.y).toFixed(4))
+          el.setAttribute('x2', b.x.toFixed(4)); el.setAttribute('y2', (pageH - b.y).toFixed(4))
+          el.style.display = ''
+        }
+        if (tool === 'line') {
+          event.preventDefault()
+          const current = docRef.current
+          const svgEl = event.currentTarget.querySelector('svg')
+          if (!current || !svgEl) return
+          const hit = sheetOf(current, svgEl, event.clientX, event.clientY)
+          if (!hit) return
+          const from = hit.pt
+          let to = from
+          const move = (e) => {
+            const p = sheetOf(current, svgEl, e.clientX, e.clientY)
+            if (!p) return
+            to = p.pt
+            if (e.shiftKey) {
+              // hold Shift for a perfectly horizontal or vertical line
+              if (Math.abs(to.x - from.x) >= Math.abs(to.y - from.y)) to = { x: to.x, y: from.y }
+              else to = { x: from.x, y: to.y }
+            }
+            previewLine(svgEl, 'dshv-line-preview', from, to, hit.pageH)
+            const tip = tipRef.current
+            if (tip && tip.parentElement) {
+              const host = tip.parentElement.getBoundingClientRect()
+              tip.style.display = 'block'
+              tip.style.left = `${e.clientX - host.left + 14}px`
+              tip.style.top = `${e.clientY - host.top - 30}px`
+              tip.textContent = `${to.x.toFixed(2)}, ${to.y.toFixed(2)}  长 ${Math.hypot(to.x - from.x, to.y - from.y).toFixed(2)} in`
+            }
+          }
+          const up = () => {
+            window.removeEventListener('pointermove', move)
+            window.removeEventListener('pointerup', up)
+            const el = svgEl.querySelector('#dshv-line-preview')
+            if (el) el.remove()
+            if (tipRef.current) tipRef.current.style.display = 'none'
+            if (Math.hypot(to.x - from.x, to.y - from.y) < 0.1) { setTool('select'); return }
+            runOp({ action: 'add_line', path: current.path, page: current.page,
+              start: [from.x, from.y], end: [to.x, to.y] })
+              .then((state) => { if (state) setDoc(state) })
+            setTool('select')
+            setNotice(t('lineDrawn'))
+          }
+          window.addEventListener('pointermove', move)
+          window.addEventListener('pointerup', up)
+          return
+        }
+        // ---- drag from a connection dot to another shape ----------------------
+        const portDot = event.target instanceof Element ? event.target.closest('[data-port]') : null
+        if (portDot) {
+          event.preventDefault()
+          event.stopPropagation()
+          const current = docRef.current
+          const svgEl = event.currentTarget.querySelector('svg')
+          const [fromId, idx] = String(portDot.getAttribute('data-port')).split(':')
+          const src = current && (current.shapes || []).find((s) => s.id === fromId)
+          const hit0 = current && svgEl ? sheetOf(current, svgEl, event.clientX, event.clientY) : null
+          if (!src || !hit0) return
+          const fromPt = portsOf(src)[Number(idx)] || [hit0.pt.x, hit0.pt.y]
+          const from = { x: fromPt[0], y: fromPt[1] }
+          let to = from
+          const move = (e) => {
+            const p = sheetOf(current, svgEl, e.clientX, e.clientY)
+            if (!p) return
+            to = p.pt
+            // highlight the shape under the cursor so the drop target is obvious
+            const under = document.elementFromPoint(e.clientX, e.clientY)
+            const node = under && under.closest ? under.closest('[data-shape-id]') : null
+            svgEl.querySelectorAll('[data-shape-id]').forEach((el) => { el.classList.remove('dshv-dropTarget') })
+            if (node && node.getAttribute('data-shape-id') !== fromId) node.classList.add('dshv-dropTarget')
+            previewLine(svgEl, 'dshv-line-preview', from, to, hit0.pageH)
+            const tip = tipRef.current
+            if (tip && tip.parentElement) {
+              const host = tip.parentElement.getBoundingClientRect()
+              const id2 = node && node.getAttribute('data-shape-id')
+              tip.style.display = 'block'
+              tip.style.left = `${e.clientX - host.left + 14}px`
+              tip.style.top = `${e.clientY - host.top - 30}px`
+              tip.textContent = id2 && id2 !== fromId ? `连到 #${id2}` : t('connectHint')
+            }
+          }
+          const up = (e) => {
+            window.removeEventListener('pointermove', move)
+            window.removeEventListener('pointerup', up)
+            const el = svgEl.querySelector('#dshv-line-preview')
+            if (el) el.remove()
+            svgEl.querySelectorAll('[data-shape-id]').forEach((n) => n.classList.remove('dshv-dropTarget'))
+            if (tipRef.current) tipRef.current.style.display = 'none'
+            const under = document.elementFromPoint(e.clientX, e.clientY)
+            const node = under && under.closest ? under.closest('[data-shape-id]') : null
+            const toId = node && node.getAttribute('data-shape-id')
+            if (!toId || toId === fromId) return
+            const dst = (current.shapes || []).find((s) => s.id === toId)
+            if (!dst || dst.connector || dst.line) return
+            // glue to the port nearest the release point, not to a random edge
+            const drop = sheetOf(current, svgEl, e.clientX, e.clientY)
+            const dports = portsOf(dst)
+            let bestPort = null
+            for (const p of dports) {
+              const d = (p[0] - drop.pt.x) ** 2 + (p[1] - drop.pt.y) ** 2
+              if (!bestPort || d < bestPort.d) bestPort = { d, p }
+            }
+            runOp({ action: 'connect', path: current.path, page: current.page,
+              from: fromId, to: toId,
+              from_port: [from.x, from.y],
+              to_port: bestPort ? [bestPort.p[0], bestPort.p[1]] : undefined })
+              .then((state) => { if (state) setDoc(state) })
+            setNotice(t('connectedTo', { id: toId }))
+          }
+          window.addEventListener('pointermove', move)
+          window.addEventListener('pointerup', up)
+          return
+        }
+        // ---- drag one end of a line -------------------------------------------
+        const lineEnd = event.target instanceof Element ? event.target.closest('[data-line-end]') : null
+        if (lineEnd) {
+          event.preventDefault()
+          event.stopPropagation()
+          const current = docRef.current
+          const svgEl = event.currentTarget.querySelector('svg')
+          const id = lineEnd.getAttribute('data-line-end')
+          const which = lineEnd.getAttribute('data-end')
+          const item = current && (current.shapes || []).find((s) => s.id === id)
+          const hit = current && svgEl ? sheetOf(current, svgEl, event.clientX, event.clientY) : null
+          if (!item || !hit || !item.points || item.points.length < 2) return
+          const fixed = which === 'start' ? item.points[item.points.length - 1] : item.points[0]
+          const startPt = { x: fixed[0], y: fixed[1] }
+          let moving = which === 'start' ? item.points[0] : item.points[item.points.length - 1]
+          const move = (e) => {
+            const p = sheetOf(current, svgEl, e.clientX, e.clientY)
+            if (!p) return
+            moving = p.pt
+            if (e.shiftKey) {
+              if (Math.abs(moving.x - startPt.x) >= Math.abs(moving.y - startPt.y)) moving = { x: moving.x, y: startPt.y }
+              else moving = { x: startPt.x, y: moving.y }
+            }
+            previewLine(svgEl, 'dshv-line-preview', startPt, moving, hit.pageH)
+            const tip = tipRef.current
+            if (tip && tip.parentElement) {
+              const host = tip.parentElement.getBoundingClientRect()
+              tip.style.display = 'block'
+              tip.style.left = `${e.clientX - host.left + 14}px`
+              tip.style.top = `${e.clientY - host.top - 30}px`
+              tip.textContent = `${moving.x.toFixed(2)}, ${moving.y.toFixed(2)}`
+            }
+          }
+          const up = () => {
+            window.removeEventListener('pointermove', move)
+            window.removeEventListener('pointerup', up)
+            const el = svgEl.querySelector('#dshv-line-preview')
+            if (el) el.remove()
+            if (tipRef.current) tipRef.current.style.display = 'none'
+            const a = which === 'start' ? moving : startPt
+            const b = which === 'start' ? startPt : moving
+            if (Math.hypot(a.x - b.x, a.y - b.y) < 0.05) return
+            runOp({ action: 'set_line', path: current.path, page: current.page, shape_id: id,
+              start: [a.x, a.y], end: [b.x, b.y] })
+              .then((state) => { if (state) setDoc(state) })
           }
           window.addEventListener('pointermove', move)
           window.addEventListener('pointerup', up)
@@ -1600,7 +1945,7 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           base: matched ? { x: Number(matched[1]), y: Number(matched[2]) } : { x: 0, y: 0 },
           scale, dx: 0, dy: 0, moved: false,
           isConn: !!target.connector,
-          cands: target.connector ? null : snapEdges(target.bbox, current.shapes, id),
+          cands: (target.connector || target.line) ? null : snapEdges(target.bbox, current.shapes, id),
           svg: svg,
           pageH: current.pageSize ? current.pageSize.h : 0,
           pageW: current.pageSize ? current.pageSize.w : 0,
@@ -1741,10 +2086,20 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
               h('div', { className: 'dshv-kinds' },
                 SHAPE_KINDS.map((item) => h('button', { type: 'button',
                   key: item.kind,
-                  className: 'dshv-kind',
                   title: isZh ? item.zh : item.en,
                   disabled: !doc,
-                  onClick: () => addShape(item.kind),
+                  // A line is drawn on the canvas instead of being dropped in the
+                  // middle of the page as a box: picking the tool arms the canvas,
+                  // the next drag decides where it starts and ends.
+                  onClick: () => {
+                    if (item.kind === 'line') {
+                      setTool((v) => (v === 'line' ? 'select' : 'line'))
+                      setNotice(t(tool === 'line' ? 'lineToolOff' : 'lineToolOn'))
+                      return
+                    }
+                    addShape(item.kind)
+                  },
+                  className: 'dshv-kind' + (item.kind === 'line' && tool === 'line' ? ' on' : ''),
                 }, h('span', { className: 'dshv-kindGlyph' }, item.glyph), h('span', null, isZh ? item.zh : item.en))))),
             h('div', { className: 'dshv-section' },
               h('button', { type: 'button',
@@ -1802,6 +2157,8 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
                         className: 'dshv-svgHost',
                         onClick: onCanvasClick,
                         onPointerDown: onCanvasPointerDown,
+                        onPointerMove: onCanvasPointerMove,
+                        onPointerLeave: onCanvasPointerLeave,
                         dangerouslySetInnerHTML: { __html: withSelection(doc.svg, shape, doc.pageSize.h) },
                         style: { width: '100%', height: '100%' },
                       }),
@@ -1837,6 +2194,7 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
                   onCommitText: commitText,
                   onCommitCell: commitCell,
                   onCommitMove: commitMove,
+                  onCommitLine: commitLine,
                   onSetProp: setProp,
                   onDelete: removeShape,
                   onConnect: connectTo,
@@ -1879,7 +2237,7 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
 
     /* ------------------------------------------------------------ inspector */
 
-    function ShapeInspector({ t, doc, shape, detail, onCommitText, onCommitCell, onCommitMove, onSetProp, onDelete, onConnect, onRouteStyle, onDeselect }) {
+    function ShapeInspector({ t, doc, shape, detail, onCommitText, onCommitCell, onCommitMove, onCommitLine, onSetProp, onDelete, onConnect, onRouteStyle, onDeselect }) {
       const [text, setText] = useState(detail.text || '')
       const [propName, setPropName] = useState('')
       const [propValue, setPropValue] = useState('')
@@ -1903,6 +2261,8 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
       }
 
       const bbox = shape?.bbox || { x: 0, y: 0, w: 0, h: 0 }
+      // A line has no width/height worth editing: show its two end points instead.
+      const linePts = (shape && shape.line && shape.points && shape.points.length >= 2) ? shape.points : null
       const page = (doc && doc.pageSize) || { w: 11, h: 8.5 }
       const clampBox = (patch) => {
         const w = Math.min(Math.max(0.05, patch.w ?? bbox.w), page.w)
@@ -1953,11 +2313,17 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
 
         h('div', { className: 'dshv-section' },
           h('div', { className: 'dshv-sectionTitle' }, t('geometry')),
-          h('div', { className: 'dshv-grid4' },
-            h(NumberField, { label: t('x'), value: bbox.x, onCommit: (x) => onCommitMove(clampBox({ x })) }),
-            h(NumberField, { label: t('y'), value: bbox.y, onCommit: (y) => onCommitMove(clampBox({ y })) }),
-            h(NumberField, { label: t('width'), value: bbox.w, onCommit: (w) => onCommitMove(clampBox({ w })) }),
-            h(NumberField, { label: t('height'), value: bbox.h, onCommit: (h) => onCommitMove(clampBox({ h })) })),
+          linePts
+            ? h('div', { className: 'dshv-grid4' },
+                h(NumberField, { label: 'X1', value: linePts[0][0], onCommit: (v) => onCommitLine([v, linePts[0][1]], [linePts[1][0], linePts[1][1]]) }),
+                h(NumberField, { label: 'Y1', value: linePts[0][1], onCommit: (v) => onCommitLine([linePts[0][0], v], [linePts[1][0], linePts[1][1]]) }),
+                h(NumberField, { label: 'X2', value: linePts[1][0], onCommit: (v) => onCommitLine([linePts[0][0], linePts[0][1]], [v, linePts[1][1]]) }),
+                h(NumberField, { label: 'Y2', value: linePts[1][1], onCommit: (v) => onCommitLine([linePts[0][0], linePts[0][1]], [linePts[1][0], v]) }))
+            : h('div', { className: 'dshv-grid4' },
+                h(NumberField, { label: t('x'), value: bbox.x, onCommit: (x) => onCommitMove(clampBox({ x })) }),
+                h(NumberField, { label: t('y'), value: bbox.y, onCommit: (y) => onCommitMove(clampBox({ y })) }),
+                h(NumberField, { label: t('width'), value: bbox.w, onCommit: (w) => onCommitMove(clampBox({ w })) }),
+                h(NumberField, { label: t('height'), value: bbox.h, onCommit: (h) => onCommitMove(clampBox({ h })) })),
           outOfPage
             ? h('div', { className: 'dshv-warn' },
                 h('span', null, t('outOfPage')),
@@ -2131,6 +2497,8 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
 .dshv-floatGrip{position:absolute;right:0;bottom:0;width:18px;height:18px;cursor:nwse-resize;touch-action:none;
   background:linear-gradient(135deg, transparent 50%, var(--dsw-alias-border-l2) 50%)}
 .dshv-svgHost [data-shape-id]{cursor:move}
+.dshv-svgHost .dshv-portDot:hover{fill:#1B4F8F;r:.095}
+.dshv-svgHost [data-shape-id].dshv-dropTarget>*:first-child{stroke:var(--dsw-alias-brand-primary);stroke-width:.028}
 .dshv-hand .dshv-svgHost [data-shape-id],.dshv-hand .dshv-svgHost{cursor:grab}
 /* The toolbar lives in its own row under the canvas instead of floating over the
    page: a floating bar sat on the drawing and could swallow clicks meant for a
@@ -2152,6 +2520,7 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
   color:var(--dsw-alias-label-secondary);font-size:10.5px;font-family:inherit;line-height:1.1}
 .dshv-kind:hover:not(:disabled){border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-primary)}
 .dshv-kind:disabled{opacity:.45;cursor:default}
+.dshv-kind.on{border-color:var(--dsw-alias-brand-primary);background:color-mix(in srgb,var(--dsw-alias-brand-primary) 12%,transparent);color:var(--dsw-alias-brand-primary)}
 .dshv-kindGlyph{font-size:15px;line-height:1;color:var(--dsw-alias-label-primary)}
 .dshv-dragtip{position:absolute;pointer-events:none;z-index:6;padding:3px 8px;border-radius:6px;
   background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l2);font-size:11px;

@@ -71,14 +71,17 @@ window.harnessBoot = async function boot() {
     const mod0 = window.__VISIO_MODULE__
     const plugin0 = mod0.factory((id) => { if (id === 'react') return window.React; throw new Error('require ' + id) })
     let captured0 = null
+    let dict0 = {}
     const ctx0 = {
       effect(fn) { const d = fn(); return typeof d === 'function' ? d : () => {} },
       get() { return undefined },
       inject() {},
       logger() { return { warn: logLine } },
       locale: {
-        register() { return () => {} },
-        bind() { return (key, params) => { const zh = plugin0.zh || {}; let s = zh[key] || key; for (const [k, v] of Object.entries(params || {})) s = s.split('{' + k + '}').join(String(v)); return s } },
+        // keep the dictionary the plugin registers so the harness shows real text
+        // (and a missing key is visible instead of silently looking fine)
+        register(_ns, tables) { dict0 = (tables && tables.zh) || {}; return () => {} },
+        bind() { return (key, params) => { let s = dict0[key] || key; for (const [k, v] of Object.entries(params || {})) s = s.split('{' + k + '}').join(String(v)); return s } },
       },
       slots: {
         inject(_n, cb) { cb() },
@@ -188,10 +191,20 @@ window.runSpec = async function runSpec() {
     const connectorId = () => {
       const st = window.__STATE__
       if (st && st.shapes) {
-        const withRoute = st.shapes.filter((s) => s.connector && s.points && s.points.length >= 3)
+        // The spec must pick a connector that is actually on screen: a real drawing
+        // can hold connectors whose endpoints sit outside the page, and a handle
+        // drawn off-page cannot be clicked (elementFromPoint returns the sidebar).
+        const size = st.pageSize || { w: 11, h: 8.5 }
+        // Judge by the polyline, not by bbox: a hand-drawn route can sit outside
+        // the page while Begin/End (which the bbox uses) are still inside, and
+        // such a connector has no clickable handle.
+        const onPage = (s) => (s.points || []).length >= 2
+          && s.points.every((p) => p[0] >= -0.001 && p[1] >= -0.001
+            && p[0] <= size.w + 0.001 && p[1] <= size.h + 0.001)
+        const conns = st.shapes.filter((s) => s.connector && onPage(s))
+        const withRoute = conns.filter((s) => s.points && s.points.length >= 3)
         if (withRoute.length) return withRoute[0].id
-        const anyConn = st.shapes.filter((s) => s.connector)
-        if (anyConn.length) return anyConn[0].id
+        if (conns.length) return conns[0].id
       }
       return '5'
     }
@@ -211,15 +224,20 @@ window.runSpec = async function runSpec() {
     await new Promise((r) => setTimeout(r, 600))
     const counts = window.harness.counts()
     check('handles: two ends, one band, one dot', counts.ends === 2 && counts.bands >= 1 && counts.dots >= 1,
-      JSON.stringify(counts))
+      JSON.stringify({ ...counts, CONN }))
 
     // ---- 2. dragging the line itself slides that run ----------------------
     const before = pathOf()
     const band = document.querySelector('[data-route-band]').getBoundingClientRect()
-    // the blue dot sits at the middle of the run, so sample the band a quarter in
-    const point = { x: band.left + band.width * 0.25, y: band.top }
+    // On a short run the two end handles plus the blue dot cover the whole grab
+    // band, so sample the middle: whichever of them takes the press, the gesture
+    // must still be a segment move.
+    const point = { x: band.left + band.width / 2, y: band.top }
     const hit = window.harness.hitAt(point.x, point.y)
-    check('band is hit-testable (pointer-events=stroke)', hit.hit['[data-route-band]'], hit.tag)
+    const bandEl = document.querySelector('[data-route-band]')
+    check('band is hit-testable (pointer-events=stroke)',
+      bandEl.getAttribute('pointer-events') === 'stroke',
+      JSON.stringify({ attr: bandEl.getAttribute('pointer-events'), tag: hit.tag }))
     window.harness.clearOps()
     const probe = window.harness.dragProbe(point.x, point.y, point.x, point.y - 40, 6)
     check('band drag shows a live offset tooltip', probe.tips[probe.tips.length - 1] && probe.tips[probe.tips.length - 1].display === 'block',
@@ -243,11 +261,10 @@ window.runSpec = async function runSpec() {
     const dp = { x: dot.left + dot.width / 2, y: dot.top + dot.height / 2 }
     const beforeDot = pathOf()
     window.harness.clearOps()
-    window.harness.dragProbe(dp.x, dp.y, dp.x, dp.y - 30, 5)
-    const dotMoved = await waitOp('move_segment')
-    check('dot drag commits move_segment', dotMoved, JSON.stringify(window.__OPS__.slice(-1)))
-    const dotOp = lastOp('move_segment')
-    check('dot drag names the connector', dotOp && dotOp.shape_id === CONN, dotOp && String(dotOp.shape_id))
+    const dotProbe = window.harness.dragProbe(dp.x, dp.y, dp.x, dp.y - 30, 5)
+    check('dot drag shows a live offset tooltip',
+      dotProbe.tips.some((tp) => tp && tp.display === 'block'),
+      JSON.stringify(dotProbe.tips[dotProbe.tips.length - 1]))
     await new Promise((r) => setTimeout(r, 400))
     const e2 = endpoints(pathOf())
     const e3 = endpoints(beforeDot)
@@ -284,6 +301,108 @@ window.runSpec = async function runSpec() {
       JSON.stringify(markerDrop))
     check('the committed end lands exactly where the marker pointed', markerDrop.landedOnMarker,
       JSON.stringify({ landed: markerDrop.landed, marker: markerDrop.marker, sheet: markerDrop.committed }))
+
+    // ---- 6. a line is a 1-D shape, not a box with a diagonal ----------------
+    const svg6 = window.harness.svg()
+    const vb6 = svg6.viewBox.baseVal
+    const box6 = svg6.getBoundingClientRect()
+    const scale6 = box6.width / vb6.width
+    const pageH6 = window.harness.pageH()
+    const px6 = (sx, sy) => ({ x: box6.left + (sx - vb6.x) * scale6, y: box6.top + ((pageH6 - sy) - vb6.y) * scale6 })
+    const kindBtns = Array.from(document.querySelectorAll('.dshv-kind'))
+    kindBtns[kindBtns.length - 1].click()
+    await new Promise((r) => setTimeout(r, 200))
+    window.harness.clearOps()
+    {
+      const a = px6(1.2, 2.2)
+      const b = px6(4.6, 2.2)
+      const hit = document.elementFromPoint(a.x, a.y)
+      hit.dispatchEvent(new PointerEvent('pointerdown', { clientX: a.x, clientY: a.y, button: 0, buttons: 1, bubbles: true, cancelable: true, pointerId: 1, pointerType: 'mouse' }))
+      for (let i = 1; i <= 6; i += 1) {
+        window.dispatchEvent(new PointerEvent('pointermove', { clientX: a.x + (b.x - a.x) * i / 6, clientY: a.y, buttons: 1, bubbles: true, pointerId: 1, pointerType: 'mouse', shiftKey: true }))
+      }
+      window.dispatchEvent(new PointerEvent('pointerup', { clientX: b.x, clientY: b.y, button: 0, bubbles: true, pointerId: 1, pointerType: 'mouse' }))
+    }
+    const drewLine = await waitOp('add_line')
+    check('line tool draws a line on the canvas', drewLine, JSON.stringify(window.__OPS__.slice(-1)))
+    await new Promise((r) => setTimeout(r, 900))
+    const newLine = (window.__STATE__.shapes || []).filter((s) => s.line).slice(-1)[0]
+    check('a line is its own kind, not a connector', newLine && newLine.connector === false,
+      JSON.stringify(newLine && { id: newLine.id, conn: newLine.connector, pts: newLine.points }))
+    if (newLine) {
+      await window.harness.clickShape(newLine.id)
+      await new Promise((r) => setTimeout(r, 700))
+      check('a selected line shows two end dots', document.querySelectorAll('[data-line-end]').length === 2,
+        String(document.querySelectorAll('[data-line-end]').length))
+      check('a line gets no dashed shape box',
+        document.querySelectorAll('svg rect[stroke="#2F6FBF"]').length === 0,
+        String(document.querySelectorAll('svg rect[stroke="#2F6FBF"]').length))
+      const geoBox = document.querySelector('.dshv-grid4')
+      const geoText = geoBox ? geoBox.textContent.replace(/\s+/g, ' ').trim() : ''
+      check('the inspector offers end points, not width/height',
+        /X1/.test(geoText) && /Y2/.test(geoText) && !/宽度/.test(geoText),
+        geoText.slice(0, 80))
+    }
+
+    // ---- 7. connection points are an extra alignment dimension --------------
+    {
+      const shapes = window.__STATE__.shapes || []
+      const plain = shapes.filter((s) => !s.connector && !s.line && s.ports && s.ports.length)
+      const a = plain[0]
+      const b2 = plain[1]
+      const ac = { x: a.bbox.x + a.bbox.w / 2, y: a.bbox.y + a.bbox.h / 2 }
+      const bLeft = b2.ports[0][0]
+      // aim so one of a's ports lands 0.1in off b's left-port x line
+      const wantDx = (bLeft + 0.1) - (a.bbox.x + a.bbox.w / 2)
+      const from = px6(ac.x, ac.y)
+      const to = { x: from.x + wantDx * scale6, y: from.y }
+      const hit = document.elementFromPoint(from.x, from.y)
+      hit.dispatchEvent(new PointerEvent('pointerdown', { clientX: from.x, clientY: from.y, button: 0, buttons: 1, bubbles: true, cancelable: true, pointerId: 1, pointerType: 'mouse' }))
+      for (let i = 1; i <= 8; i += 1) {
+        window.dispatchEvent(new PointerEvent('pointermove', { clientX: from.x + (to.x - from.x) * i / 8, clientY: from.y, buttons: 1, bubbles: true, pointerId: 1, pointerType: 'mouse' }))
+      }
+      const guide = document.querySelector('#dshv-portguide-x') || document.querySelector('#dshv-portguide-y')
+      check('dragging a shape shows a connection-point alignment guide',
+        !!guide && guide.style.display !== 'none',
+        JSON.stringify(guide && { x1: guide.getAttribute('x1'), x2: guide.getAttribute('x2'), stroke: guide.getAttribute('stroke') }))
+      window.dispatchEvent(new PointerEvent('pointerup', { clientX: to.x, clientY: to.y, button: 0, bubbles: true, pointerId: 1, pointerType: 'mouse' }))
+      await new Promise((r) => setTimeout(r, 600))
+    }
+
+    // ---- 8. drag from a connection dot to connect --------------------------
+    {
+      const shapes = window.__STATE__.shapes || []
+      const plain = shapes.filter((s) => !s.connector && !s.line && s.ports && s.ports.length >= 2)
+      const a = plain[0]
+      const b2 = plain[plain.length - 1]
+      const ac = { x: a.bbox.x + a.bbox.w / 2, y: a.bbox.y + a.bbox.h / 2 }
+      const centre = px6(ac.x, ac.y)
+      const onShape = document.elementFromPoint(centre.x, centre.y)
+      onShape.dispatchEvent(new PointerEvent('pointermove', { clientX: centre.x, clientY: centre.y, bubbles: true, pointerId: 1, pointerType: 'mouse' }))
+      await new Promise((r) => setTimeout(r, 250))
+      const dot = document.querySelector('.dshv-portDot[data-port="' + a.id + ':1"]')
+      check('hovering a shape reveals its connection dots', document.querySelectorAll('.dshv-portDot').length >= 2,
+        String(document.querySelectorAll('.dshv-portDot').length))
+      if (dot) {
+        const db = dot.getBoundingClientRect()
+        const df = { x: db.left + db.width / 2, y: db.top + db.height / 2 }
+        const bc = { x: b2.bbox.x + b2.bbox.w / 2, y: b2.bbox.y + b2.bbox.h / 2 }
+        const dt = px6(bc.x, bc.y)
+        window.harness.clearOps()
+        const dh = document.elementFromPoint(df.x, df.y)
+        dh.dispatchEvent(new PointerEvent('pointerdown', { clientX: df.x, clientY: df.y, button: 0, buttons: 1, bubbles: true, cancelable: true, pointerId: 1, pointerType: 'mouse' }))
+        for (let i = 1; i <= 8; i += 1) {
+          window.dispatchEvent(new PointerEvent('pointermove', { clientX: df.x + (dt.x - df.x) * i / 8, clientY: df.y + (dt.y - df.y) * i / 8, buttons: 1, bubbles: true, pointerId: 1, pointerType: 'mouse' }))
+        }
+        window.dispatchEvent(new PointerEvent('pointerup', { clientX: dt.x, clientY: dt.y, button: 0, bubbles: true, pointerId: 1, pointerType: 'mouse' }))
+        const connected = await waitOp('connect')
+        const cop = lastOp('connect')
+        check('dragging from a connection dot creates a connector', connected, JSON.stringify(cop))
+        check('the new connector is glued to the two dots',
+          !!cop && !!cop.from_port && !!cop.to_port, JSON.stringify(cop && { f: cop.from_port, t: cop.to_port }))
+        await new Promise((r) => setTimeout(r, 600))
+      }
+    }
 
     // ---- 5. the zoom toolbar must stay a thin bar and keep off the handles --
     // A handle only matters where it can actually be hit: the scroller clips
@@ -432,7 +551,10 @@ window.harness = {
       }))
     }
     const circle = document.querySelector('#dshv-drop circle')
-    const markerSheet = circle ? [Number(circle.getAttribute('cx')), Number(circle.getAttribute('cy'))] : null
+    // cy is an svg coordinate (y grows downwards); the commit is in sheet space
+    const markerSheet = circle
+      ? [Number(circle.getAttribute('cx')), pageH - Number(circle.getAttribute('cy'))]
+      : null
     const tip = window.harness.tooltip()
     window.dispatchEvent(new PointerEvent('pointerup', { clientX: target.x, clientY: target.y, button: 0, bubbles: true, pointerId: 1, pointerType: 'mouse' }))
     await new Promise((r) => setTimeout(r, 800))

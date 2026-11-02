@@ -229,6 +229,15 @@ class Vsdx:
             })
         return out
 
+    @staticmethod
+    def _line_points(sh):
+        """The two end points of a 1-D line, as [start, end] in sheet coordinates."""
+        try:
+            return [(float(_cellv(sh, "BeginX") or 0), float(_cellv(sh, "BeginY") or 0)),
+                    (float(_cellv(sh, "EndX") or 0), float(_cellv(sh, "EndY") or 0))]
+        except (TypeError, ValueError):
+            return []
+
     def ports(self, sh, ox: float, oy: float):
         """The connection points a connector end may glue to, in sheet coordinates.
 
@@ -291,7 +300,11 @@ class Vsdx:
                         nm = row.get("N") or ""
                         val = _cellv(row, "Value", "")
                         props[nm.replace("Prop.", "")] = val
-            is_connector = any(_cell(sh, c) is not None for c in ("BeginX", "EndX"))
+            # A 1-D line also carries Begin/End, so the name decides: only a
+            # "Line." sheet is a plain line, everything else with ends is a connector.
+            is_line = str(sh.get("NameU") or "").startswith("Line.")
+            is_connector = (not is_line) and any(
+                _cell(sh, c) is not None for c in ("BeginX", "EndX"))
             out.append({
                 "id": sh.get("ID"),
                 "name": sh.get("NameU") or sh.get("Name") or "",
@@ -308,8 +321,10 @@ class Vsdx:
                 },
                 "geometry": [k for k in kinds if k],
                 "connector": is_connector,
+                "line": is_line,
                 "points": ([] if getattr(self, "_no_points", False)
-                           else (self.drawn_points(sh.get("ID"), page) if is_connector else [])),
+                           else (self.drawn_points(sh.get("ID"), page) if is_connector
+                                 else (self._line_points(sh) if is_line else []))),
                 "connects": connects.get(sh.get("ID"), []),
                 # The points a connector end may land on, in sheet coordinates.
                 # The panel used to guess four bbox midpoints, which disagree with
@@ -429,7 +444,7 @@ class Vsdx:
         det = self.shape(shape_id, page)
         cells = det["cells"]
         meta = next((sh for sh in self.shapes(page) if sh["id"] == str(shape_id)), None)
-        if meta and meta.get("connector"):
+        if meta and (meta.get("connector") or meta.get("line")):
             # A 1-D shape has no meaningful Width/Height: translating it rewrites the
             # endpoints instead, which is what Visio does when you drag a connector.
             bbox = meta["bbox"]
@@ -592,6 +607,76 @@ class Vsdx:
         self._write_page(part, root)
         return sid
 
+    def add_line(self, page: int = 1, x1: float = 1.0, y1: float = 1.0,
+                 x2: float = 3.0, y2: float = 1.0, arrow: bool = False,
+                 color: str = "#404040"):
+        """Draw a plain 1-D line.
+
+        A line is not a shape: it has two end points and no box to fill, so it is
+        stored the way Visio stores a 1-D shape (Begin/End cells driving the
+        geometry) instead of a rectangle with a diagonal drawn inside it.  Placing
+        one used to produce a 2x1.2 box that could be filled, resized and aligned
+        like any other shape.
+        """
+        part, root = self._page_root(page)
+        shapes_el = root.find(_v("Shapes"))
+        if shapes_el is None:
+            shapes_el = ET.SubElement(root, _v("Shapes"))
+        sid = self._new_id(root)
+        sh = ET.SubElement(shapes_el, _v("Shape"))
+        sh.set("ID", sid)
+        # The Line. prefix is what tells shapes() this is a 1-D line, not a
+        # connector: both carry Begin/End cells.
+        sh.set("NameU", "Line.%s" % sid)
+        sh.set("Type", "Shape")
+        sh.set("LineStyle", "0")
+        sh.set("FillStyle", "0")
+        sh.set("TextStyle", "0")
+        w = abs(x2 - x1)
+        h = abs(y2 - y1)
+        cells = {
+            "PinX": (x1 + x2) / 2.0,
+            "PinY": (y1 + y2) / 2.0,
+            # Visio requires a non-zero box; the line itself ignores it
+            "Width": w if w > 1e-4 else 1e-4,
+            "Height": h if h > 1e-4 else 1e-4,
+            "LocPinX": (w if w > 1e-4 else 1e-4) / 2.0,
+            "LocPinY": (h if h > 1e-4 else 1e-4) / 2.0,
+            "Angle": 0,
+            "BeginX": x1, "BeginY": y1, "EndX": x2, "EndY": y2,
+            "LineWeight": 0.01041666666666667,
+            "LineColor": color,
+            "LinePattern": 1,
+            "FillPattern": 0,
+            "EndArrow": 4 if arrow else 0,
+            "BeginArrow": 0,
+        }
+        for k, v in cells.items():
+            c = ET.SubElement(sh, _v("Cell"))
+            c.set("N", k)
+            c.set("V", str(v))
+        self._write_page(part, root)
+        return sid
+
+    def set_line(self, shape_id, x1: float, y1: float, x2: float, y2: float,
+                 page: int = 1):
+        """Move one end (or both) of a 1-D line."""
+        det = self.shape(shape_id, page)
+        cells = det["cells"]
+        tip = "Line." in str(det.get("name") or "")
+        if not tip and not any(k in cells for k in ("BeginX", "EndX")):
+            raise VsdxError("shape %s is not a line" % shape_id)
+        w = max(abs(x2 - x1), 1e-4)
+        h = max(abs(y2 - y1), 1e-4)
+        self.set_cells(shape_id, {
+            "BeginX": round(float(x1), 6), "BeginY": round(float(y1), 6),
+            "EndX": round(float(x2), 6), "EndY": round(float(y2), 6),
+            "PinX": round((x1 + x2) / 2.0, 6), "PinY": round((y1 + y2) / 2.0, 6),
+            "Width": round(w, 6), "Height": round(h, 6),
+            "LocPinX": round(w / 2.0, 6), "LocPinY": round(h / 2.0, 6),
+        }, page)
+        return {"ok": True, "shape_id": str(shape_id)}
+
     def add_master_shape(self, master_id, page: int = 1, x: float = None, y: float = None,
                          w: float = 1.5, h: float = 0.75, text: str = "", rows=None):
         """Place an instance of a master (stencil shape); geometry comes from the master."""
@@ -636,8 +721,14 @@ class Vsdx:
         self._write_page(part, root)
         return sid
 
-    def connect(self, from_id, to_id, page: int = 1, label: str = ""):
-        """Add a straight dynamic connector between two shapes."""
+    def connect(self, from_id, to_id, page: int = 1, label: str = "",
+                from_port=None, to_port=None):
+        """Add a dynamic connector between two shapes.
+
+        `from_port` / `to_port` pin the connector to a specific connection point
+        when the caller knows which one the user grabbed; without them the end is
+        put on the box edge facing the other shape.
+        """
         part, root = self._page_root(page)
         page_shapes = {s["id"]: s for s in self.shapes(page)}
         a = page_shapes.get(str(from_id))
@@ -666,6 +757,10 @@ class Vsdx:
         bcx, bcy = center(b)
         ax, ay = edge(a, bcx, bcy)
         bx, by = edge(b, acx, acy)
+        if from_port is not None:
+            ax, ay = float(from_port[0]), float(from_port[1])
+        if to_port is not None:
+            bx, by = float(to_port[0]), float(to_port[1])
         shapes_el = root.find(_v("Shapes"))
         sid = self._new_id(root)
         sh = ET.SubElement(shapes_el, _v("Shape"))
@@ -1982,9 +2077,22 @@ class Vsdx:
         for sh in plain:
             if not sh["connector"]:
                 continue
-            tos = [str(x["to"]) for x in (sh.get("connects") or [])]
+            conns = sh.get("connects") or []
+            tos = [str(x["to"]) for x in conns]
             if len(tos) == 2 and tos[0] in nodes and tos[1] in nodes and tos[0] != tos[1]:
-                edges.append({"id": sh["id"], "a": tos[0], "b": tos[1]})
+                edge = {"id": sh["id"], "a": tos[0], "b": tos[1]}
+                # Hand the router the points the user actually glued to, so it does
+                # not silently pick another side of the box and make a drop land
+                # somewhere other than the marker promised.
+                try:
+                    cells = self.shape(sh["id"], page)["cells"]
+                    for idx, conn in enumerate(conns):
+                        prefix = "Begin" if str(conn.get("cell") or "").startswith("Begin") else "End"
+                        edge["pin_" + ("a" if idx == 0 else "b")] = (
+                            float(cells[prefix + "X"]), float(cells[prefix + "Y"]))
+                except (KeyError, TypeError, ValueError):
+                    pass
+                edges.append(edge)
         try:
             routes, issues, self.route_choice = _rg.layout(nodes, edges)
         except Exception as exc:
@@ -2039,6 +2147,10 @@ class Vsdx:
         open_group = (lambda sid: '<g data-shape-id="%s">' % _esc(sid)) if interactive else (lambda sid: "<g>")
         for s in shapes:
             if s["connector"] or s["depth"] != 0 or s.get("type") == "Guide":
+                continue
+            # 1-D lines are drawn by their own pass below: their box is zero-height
+            # most of the time, which the shape loop skips outright.
+            if s.get("line"):
                 continue
             bb = s["bbox"]
             if bb["w"] <= 0 or bb["h"] <= 0:
@@ -2163,6 +2275,36 @@ class Vsdx:
         _shape_out = out
         out = []
         for s in shapes:
+            if not s.get("line"):
+                continue
+            det = self.shape(s["id"], page)
+            c = det["cells"]
+            try:
+                x1, y1 = float(c["BeginX"]), float(c["BeginY"])
+                x2, y2 = float(c["EndX"]), float(c["EndY"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            cst = self.style(s["id"], page)
+            line_color = cst.get("line") or "#404040"
+            raw_width = cst.get("weight_in") or 0.0
+            width_attr = ('stroke-width="1" vector-effect="non-scaling-stroke"'
+                          if raw_width < 0.007 else 'stroke-width="%0.4f"' % raw_width)
+            arrow_on = str(cst.get("end_arrow") or "0") != "0"
+            marker = 'url(#dshv-arrow-%s)' % line_color.lstrip("#") if arrow_on else "none"
+            out.append(open_group(s["id"]))
+            ends = "%0.4f %0.4f %0.4f %0.4f" % (x1, H - y1, x2, H - y2)
+            out.append('<line x1="%0.4f" y1="%0.4f" x2="%0.4f" y2="%0.4f" '
+                       'stroke="%s" %s marker-end="%s" stroke-linecap="round"/>'
+                       % (x1, H - y1, x2, H - y2, line_color, width_attr, marker))
+            # fat invisible target: a hairline is almost impossible to click
+            out.append('<line x1="%0.4f" y1="%0.4f" x2="%0.4f" y2="%0.4f" '
+                       'stroke="transparent" stroke-width="12" '
+                       'vector-effect="non-scaling-stroke" pointer-events="stroke"/>'
+                       % (x1, H - y1, x2, H - y2))
+            out.append("</g>")
+        _line_out = out
+        out = []
+        for s in shapes:
             if not s["connector"]:
                 continue
             det = self.shape(s["id"], page)
@@ -2248,7 +2390,9 @@ class Vsdx:
             _k += 1
         _close = [c for c in out if c.strip() == '</svg>']
         _conn = [c for c in out if c.strip() != '</svg>']
-        out = _shape_out[:_k] + _conn + _shape_out[_k:] + _close
+        # A line has no fill, so it must sit above the shapes: drawn underneath it
+        # would simply disappear behind a white box.
+        out = _shape_out[:_k] + _conn + _shape_out[_k:] + _line_out + _close
         return "\n".join(out)
 
     def save_svg(self, out_path: str, page: int = 1, show_ids: bool = False) -> str:

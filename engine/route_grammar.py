@@ -92,16 +92,27 @@ def assign(nodes, edges):
     """
     want = {}
     groups = {}
+    # An end the user glued by hand keeps its point: the router must not move a
+    # connector to another side of the box just because the geometry is nicer.
+    pins = {}
     for e in edges:
         for end, node, other in (("a", e["a"], e["b"]), ("b", e["b"], e["a"])):
             pt, score = _ideal(nodes[node], nodes[other])
+            pin = e.get("pin_" + end)
+            if pin:
+                match = [a for a in anchors(nodes[node])
+                         if abs(a[0] - float(pin[0])) < 0.03
+                         and abs(a[1] - float(pin[1])) < 0.03]
+                if match:
+                    pt = match[0]
+                    pins[(e["id"], end)] = match[0]
             want[(e["id"], end)] = (node, pt, score)
             groups.setdefault(node, []).append((e["id"], end, pt, score))
 
     choice, lost = {}, []
     for node, items in groups.items():
         seen = {}
-        for eid, end, pt, score in sorted(items, key=lambda it: -it[3]):
+        for eid, end, pt, score in sorted(items, key=lambda it: (0 if (it[0], it[1]) in pins else 1, -it[3])):
             if pt[4] not in seen:
                 seen[pt[4]] = (eid, end)
                 choice[(eid, end)] = pt

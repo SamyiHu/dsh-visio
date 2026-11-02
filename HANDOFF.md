@@ -84,6 +84,22 @@ tests/                  test_engine.py(15) / test_client_render.mjs /
      且非轴对齐 → 「拖了线，端点跑了」。
    另外两处界面问题：zoom 工具条浮在画布上会盖住靠近底边的句柄；手绘 2 点折线会被自动布线夺回。
 
+### 5.2 2026-11-02 第三轮（「直线不是图形」+「连接点水平/垂直对齐」+「方便的连线方法」）
+
+12. **直线是 1-D 线形**：之前「直线」工具插的是 2×1.2 的框里画对角线（可填充、有 8 个缩放句柄、
+    参与图形对齐）。现在 `add_line` 写 Begin/End 单元格，`shapes()` 用 `NameU` 的 `Line.` 前缀区分
+    「线」与「连接线」（两者都有 Begin/End）。渲染单独一趟：水平线框高为 0，旧代码直接跳过，
+    所以**水平直线根本画不出来**。选中只有两个端点圆点，属性面板是 X1/Y1/X2/Y2。
+    工具改为「画布模式」：按住拖动即画线，Shift 约束正交。
+13. **连接点对齐（两个新维度）**：拖图形时先试「本图形 4 个连接点 vs 其它图形 4 个连接点」的
+    x/y 对齐，命中画**短的蓝色引导线**（只连两点，不是整页标尺）；不命中再退回原来的边/中线
+    对齐（红色整页线）。连接点命中的轴不再走边缘对齐，两者不会打架。
+14. **拖拽连线**：悬停图形冒出 4 个连接点圆点，从一个圆点拖到另一个图形即建线并胶到最近端口。
+    引擎 `connect` 支持 `from_port`/`to_port`；布线器 `assign()` 新增 `pin_a`/`pin_b`，**尊重已胶合
+    的端口**，不再为了走线好看把端点挪到框的另一侧（否则落点标记与实际不符）。
+15. **移动提交的一致性**：`move` 原先用 `light` 响应 + 二次 `render`，两次请求之间句柄按新坐标
+    画进旧图片，能偏出几十像素。现在一次请求同时返回几何与 svg。
+
 ### 5.1 2026-10-30 第二轮（用户截图「线穿过红框」+「要直线对齐辅助」+「走线要绕开模型」）
 
 5. **走线穿框**：`route_grammar.assign()` 在自带 `Connection` 行的形状上抛 `StopIteration`，
@@ -104,10 +120,10 @@ tests/                  test_engine.py(15) / test_client_render.mjs /
 
 ## 6. 回归测试（新增，别删）
 
-- `python tests/test_engine.py` → **31 tests**（原 15 + 新增 16），覆盖 `reglue` / `move_segment` /
+- `python tests/test_engine.py` → **35 tests**（原 15 + 新增 20），覆盖 `reglue` / `move_segment` /
   `_simplify` / `drawn_points` / 退化连接线 / 渲染一致性 / **单拖连接点不穿模**。
   做过反向验证：把引擎实现换回旧版，多条新测试会红。
-- `tests/interactive.html` + `tests/serve_engine.py` → **真浏览器交互测试 15 条全 PASS**：
+- `tests/interactive.html` + `tests/serve_engine.py` → **真浏览器交互测试 23 条全 PASS**：
   句柄出现、线身/蓝点拖动只平移该段且两端不动、红框拖到哪个形状就胶到哪个、落点贴在目标边上、
   zoom 条不遮句柄。跑法：
   ```
@@ -153,5 +169,5 @@ C:\Users\SOC\.dsh\profiles\desktop\node_modules\electron\dist
 2. 把端点移到另一个形状 → 松手后端点**贴在该形状的边上**，线跟着变
 3. 把一条水平段上下拖 → 整段平移，两端不动
 
-三条都已在真浏览器里通过（`tests/interactive.html?spec=1` 的 15 条断言 + `docs/connector-edit.png`），
+三条都已在真浏览器里通过（`tests/interactive.html?spec=1` 的 23 条断言 + `docs/connector-edit.png`），
 剩下的只有用户在**真实面板**里的最终确认。

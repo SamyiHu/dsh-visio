@@ -445,6 +445,49 @@ def action_set_prop(req):
     return build_state(path, page, sid, notice="形状数据已保存", saved=True)
 
 
+def _point(req, key):
+    """Read an [x, y] pair from the request, or None when it is absent."""
+    raw = req.get(key)
+    if raw is None:
+        return None
+    if not isinstance(raw, (list, tuple)) or len(raw) != 2:
+        raise BadRequest("%s must be [x, y]" % key)
+    return [number(raw[0], key), number(raw[1], key)]
+
+
+def action_add_line(req):
+    path = drawing_path(req.get("path"))
+    doc = load_doc(path)
+    page = page_of(req.get("page"), doc.pages)
+    start = _point(req, "start") or [number(req.get("x1", 2.0), "x1"),
+                                     number(req.get("y1", 3.0), "y1")]
+    end = _point(req, "end") or [number(req.get("x2", 4.0), "x2"),
+                                 number(req.get("y2", 3.0), "y2")]
+    sid = doc.add_line(page=page, x1=start[0], y1=start[1], x2=end[0], y2=end[1],
+                       arrow=bool(req.get("arrow")),
+                       color=text(req.get("line"), "line", 20) or "#404040")
+    save_doc(doc, req.get("backup", True))
+    return build_state(path, page, sid, notice="已添加直线 #%s" % sid, saved=True)
+
+
+def action_set_line(req):
+    path = drawing_path(req.get("path"))
+    doc = load_doc(path)
+    page = page_of(req.get("page"), doc.pages)
+    sid = text(req.get("shape_id"), "shape_id", 40)
+    start = _point(req, "start")
+    end = _point(req, "end")
+    if not start or not end:
+        raise BadRequest("start and end are required")
+    doc.set_line(sid, start[0], start[1], end[0], end[1], page=page)
+    save_doc(doc, req.get("backup", True))
+    if req.get("light"):
+        return {"ok": True, "saved": True, "notice": "直线已更新",
+                "mtime": os.path.getmtime(path), "shape_id": sid,
+                **_history_state(path)}
+    return build_state(path, page, sid, notice="直线已更新", saved=True)
+
+
 def action_add_shape(req):
     path = drawing_path(req.get("path"))
     doc = load_doc(path)
@@ -478,7 +521,8 @@ def action_connect(req):
         raise BadRequest("from and to are required")
     if src == dst:
         raise BadRequest("cannot connect a shape to itself")
-    sid = doc.connect(src, dst, page, label=text(req.get("label"), "label", 500))
+    sid = doc.connect(src, dst, page, label=text(req.get("label"), "label", 500),
+                      from_port=_point(req, "from_port"), to_port=_point(req, "to_port"))
     save_doc(doc, req.get("backup", True))
     return build_state(path, page, sid, notice="已连接 #%s → #%s" % (src, dst), saved=True)
 
@@ -873,6 +917,8 @@ ACTIONS = {
     "move": action_move,
     "set_prop": action_set_prop,
     "add_shape": action_add_shape,
+    "add_line": action_add_line,
+    "set_line": action_set_line,
     "connect": action_connect,
     "probe": action_probe,
     "bend": action_bend,

@@ -1,6 +1,28 @@
 # Changelog
 
 ## Unreleased
+- **A line is a line, not a shape.** The 直线 tool used to drop a 2x1.2in box with a diagonal
+  drawn inside it: it had a fill, eight scale handles and took part in shape alignment. It now
+  creates a 1-D line (Begin/End cells), is drawn by its own renderer pass (a horizontal line
+  has a zero-height box and used to disappear entirely), is selected with two end dots instead
+  of a dashed box, and the inspector edits X1/Y1/X2/Y2 instead of width/height. The tool also
+  arms the canvas: drag to draw the line, hold Shift for a perfect horizontal or vertical.
+- **Connection points are a second alignment dimension.** Dragging a shape now first tries to
+  line one of its four connection points up with a connection point of another shape, on both
+  axes, and shows a short blue guide between the two points that matched. Box edges and centre
+  lines still work as before and are drawn in red; connections win when both apply.
+- **Drag-to-connect.** Hovering a shape reveals its connection dots; dragging from one dot to
+  another shape creates the connector and glues it to the port it was released near. This is one
+  gesture instead of arming a tool and clicking two shapes (the tool is still there).
+- `connect` accepts explicit `from_port` / `to_port`, and the router now honours the ports a
+  connector is already glued to instead of picking a nicer side, so a dropped end stays where
+  the drop marker said it would.
+- Moving a shape commits through the ordinary response instead of a "light" one plus a second
+  render request: between the two, handles were placed from the new coordinates into the old
+  picture and could sit inches away from the shape they belonged to.
+- 4 more engine tests (35 total) for 1-D lines, explicit ports and pin-preserving routing; the
+  browser harness grew to 23 assertions covering the line tool, connection-point guides and
+  drag-to-connect.
 - Connector handles were positioned from the stored Begin/End points while the picture drew
   the automatic route, so they floated away from the line. The panel now receives the
   polyline that is actually rendered.

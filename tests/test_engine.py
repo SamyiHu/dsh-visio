@@ -843,6 +843,69 @@ class ConnectorEditTests(unittest.TestCase):
                     "connector %s still cuts through shape %s: %r" % (link, sid, pts))
         self.assertTrue(_axis_aligned(pts), "re-route is not orthogonal: %r" % (pts,))
 
+    # ------------------------------------------------------------- 1-D lines
+    def test_add_line_stores_a_1d_line_not_a_box(self):
+        """A line has two ends; it is not a rectangle with a diagonal inside."""
+        path = self._new("line.vsdx")
+        doc = Vsdx(path)
+        doc.add_shape(1, 1.0, 5.0, 2.0, 1.0, "A", "rect")
+        lid = doc.add_line(1, 1.0, 3.0, 4.0, 3.0)
+        doc.save(backup=False)
+
+        doc = Vsdx(path)
+        meta = next(s for s in doc.shapes(1) if s["id"] == str(lid))
+        self.assertTrue(meta.get("line"), "the line is not flagged as a line")
+        self.assertFalse(meta["connector"], "a plain line must not become a connector")
+        self.assertEqual(_pts(meta["points"]), [(1.0, 3.0), (4.0, 3.0)])
+        # a zero-height box used to be skipped by the renderer entirely
+        svg = doc.to_svg(1, interactive=True, background=False)
+        self.assertIn('stroke-linecap="round"', svg, "a horizontal line was not drawn")
+        self.assertIn('x1="1.0000"', svg)
+
+    def test_set_line_moves_one_end(self):
+        path = self._new("line2.vsdx")
+        doc = Vsdx(path)
+        lid = doc.add_line(1, 1.0, 3.0, 4.0, 3.0)
+        doc.save(backup=False)
+        doc = Vsdx(path)
+        doc.set_line(lid, 1.0, 2.0, 4.0, 3.0)
+        doc.save(backup=False)
+        cells = Vsdx(path).shape(lid, 1)["cells"]
+        self.assertAlmostEqual(float(cells["BeginY"]), 2.0, places=6)
+        self.assertAlmostEqual(float(cells["EndY"]), 3.0, places=6)
+        self.assertAlmostEqual(float(cells["Height"]), 1.0, places=6)
+
+    def test_connect_honours_explicit_ports(self):
+        """The dot the user dragged from must be the dot the line is glued to."""
+        path = self._new("ports.vsdx")
+        doc = Vsdx(path)
+        a = doc.add_shape(1, 1.0, 5.0, 2.0, 1.0, "A", "rect")
+        b = doc.add_shape(1, 5.0, 5.0, 2.0, 1.0, "B", "rect")
+        cid = doc.connect(a, b, 1, from_port=(3.0, 5.05), to_port=(5.0, 5.05))
+        doc.save(backup=False)
+        cells = Vsdx(path).shape(cid, 1)["cells"]
+        self.assertAlmostEqual(float(cells["BeginX"]), 3.0, places=6)
+        self.assertAlmostEqual(float(cells["BeginY"]), 5.05, places=6)
+        self.assertAlmostEqual(float(cells["EndX"]), 5.0, places=6)
+        self.assertAlmostEqual(float(cells["EndY"]), 5.05, places=6)
+
+    def test_router_keeps_a_glued_port(self):
+        """Re-routing must not move an end to another side of the box."""
+        path = self._new("pinned.vsdx")
+        doc = Vsdx(path)
+        a = doc.add_shape(1, 1.0, 5.0, 2.0, 1.0, "A", "rect")
+        b = doc.add_shape(1, 5.0, 2.0, 2.0, 1.0, "B", "rect")
+        cid = doc.connect(a, b, 1, from_port=(2.0, 5.0), to_port=(5.0, 2.5))
+        doc.save(backup=False)
+
+        doc = Vsdx(path)
+        routes, _issues = doc.page_routes(1)
+        start = routes[str(cid)][0]
+        self.assertAlmostEqual(start[0], 2.0, places=3,
+                               msg="the router moved the glued end away: %r" % (start,))
+        self.assertAlmostEqual(start[1], 5.0, places=3,
+                               msg="the router moved the glued end away: %r" % (start,))
+
     def test_svg_draws_the_same_polyline_the_panel_shows(self):
         """Rendering must use drawn_points(), not the raw Geometry rows."""
         path = self._new("render-parity.vsdx")
