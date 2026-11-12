@@ -186,29 +186,37 @@ window.runSpec = async function runSpec() {
   const lastOp = (action) => window.__OPS__.filter((o) => o.action === action).slice(-1)[0]
 
   try {
-    // The spec runs against a fixture or a live document, so pick the connector
-    // that actually has a polyline instead of hard-coding a fixture id.
-    const connectorId = () => {
+    // Do not rely on whatever routes happen to be in the fixture: pick a
+    // connector whose band is actually hit-testable, then WRITE the routes each
+    // group of tests needs.  Short runs have no blue dot (so their body can be
+    // grabbed); long runs do, which is what the segment-adjustment tests need.
+    const pickHittable = async () => {
       const st = window.__STATE__
-      if (st && st.shapes) {
-        // The spec must pick a connector that is actually on screen: a real drawing
-        // can hold connectors whose endpoints sit outside the page, and a handle
-        // drawn off-page cannot be clicked (elementFromPoint returns the sidebar).
-        const size = st.pageSize || { w: 11, h: 8.5 }
-        // Judge by the polyline, not by bbox: a hand-drawn route can sit outside
-        // the page while Begin/End (which the bbox uses) are still inside, and
-        // such a connector has no clickable handle.
-        const onPage = (s) => (s.points || []).length >= 2
-          && s.points.every((p) => p[0] >= -0.001 && p[1] >= -0.001
-            && p[0] <= size.w + 0.001 && p[1] <= size.h + 0.001)
-        const conns = st.shapes.filter((s) => s.connector && onPage(s))
-        const withRoute = conns.filter((s) => s.points && s.points.length >= 3)
-        if (withRoute.length) return withRoute[0].id
-        if (conns.length) return conns[0].id
+      const size = (st && st.pageSize) || { w: 11, h: 8.5 }
+      const onPage = (s) => (s.points || []).length >= 2
+        && s.points.every((p) => p[0] >= -0.001 && p[1] >= -0.001
+          && p[0] <= size.w + 0.001 && p[1] <= size.h + 0.001)
+      const c = ((st && st.shapes) || []).filter((s) => s.connector && onPage(s))
+      let fallback = c.length ? c[0].id : '6'
+      for (const s of c) {
+        await window.harness.clickShape(s.id)
+        await new Promise((r) => setTimeout(r, 400))
+        const b = document.querySelector('[data-route-band="' + s.id + '"]')
+        if (!b) continue
+        const r = b.getBoundingClientRect()
+        const el = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
+        if (el && el.closest('[data-route-band]')) return s.id
       }
-      return '5'
+      return fallback
     }
-    const CONN = connectorId()
+    const CONN = await pickHittable()
+    // A three-run orthogonal route, every run > 1in, comfortably inside the page.
+    const LONG_ROUTE = [[1.2, 3.0], [4.0, 3.0], [4.0, 1.4], [7.0, 1.4]]
+    // A short straight run (< 0.5in) has no segment dot, so its body is grabbable.
+    const SHORT_ROUTE = [[1.2, 3.0], [1.6, 3.0]]
+    await window.harness.setRoute(CONN, LONG_ROUTE)
+    await window.harness.clickShape(CONN)
+    await new Promise((r) => setTimeout(r, 500))
     const targetShape = () => {
       const st = window.__STATE__
       const conn = st && st.shapes && st.shapes.find((s) => s.id === CONN)
@@ -220,6 +228,8 @@ window.runSpec = async function runSpec() {
     const OTHER = targetShape()
 
     // ---- 1. selecting a connector shows handles ---------------------------
+    // Use the long-run connector here: short runs intentionally drop the blue
+    // segment dot so their line body can be grabbed to move the whole connector.
     await window.harness.clickShape(CONN)
     await new Promise((r) => setTimeout(r, 600))
     const counts = window.harness.counts()
@@ -228,20 +238,42 @@ window.runSpec = async function runSpec() {
 
     // ---- 2. dragging the line itself slides that run ----------------------
     const before = pathOf()
-    const band = document.querySelector('[data-route-band]').getBoundingClientRect()
-    // On a short run the two end handles plus the blue dot cover the whole grab
-    // band, so sample the middle: whichever of them takes the press, the gesture
-    // must still be a segment move.
-    const point = { x: band.left + band.width / 2, y: band.top }
+    // Scan the selected connector's bands for a spot that is actually hit-testable
+    // (long connectors can have runs that sit under other shapes or off-screen).
+    let point = null
+    for (const b of document.querySelectorAll('[data-route-band="' + CONN + '"]')) {
+      const r = b.getBoundingClientRect()
+      for (const frac of [0.5, 0.35, 0.65, 0.25, 0.75]) {
+        const p = { x: r.left + r.width * frac, y: r.top + r.height / 2 }
+        const el = document.elementFromPoint(p.x, p.y)
+        if (el && el.closest('[data-route-band]')) { point = p; break }
+      }
+      if (point) break
+    }
+    if (!point) { const r2 = document.querySelector('[data-route-band]').getBoundingClientRect(); point = { x: r2.left + r2.width / 2, y: r2.top + r2.height / 2 } }
     const hit = window.harness.hitAt(point.x, point.y)
     const bandEl = document.querySelector('[data-route-band]')
     check('band is hit-testable (pointer-events=stroke)',
       bandEl.getAttribute('pointer-events') === 'stroke',
       JSON.stringify({ attr: bandEl.getAttribute('pointer-events'), tag: hit.tag }))
+    // Re-establish the long route right before this gesture: earlier groups may
+    // have reset or reshaped CONN, and a short run has no blue dot to drag.
+    await window.harness.setRoute(CONN, LONG_ROUTE)
+    await window.harness.clickShape(CONN)
+    await new Promise((r) => setTimeout(r, 500))
+    // Re-scan after re-render, then pick a point that really hits a blue dot.
+    let segPoint = null
+    for (const d of document.querySelectorAll('[data-route-handle]')) {
+      const r3 = d.getBoundingClientRect()
+      const p3 = { x: r3.left + r3.width / 2, y: r3.top + r3.height / 2 }
+      if (document.elementFromPoint(p3.x, p3.y) && document.elementFromPoint(p3.x, p3.y).closest('[data-route-handle]')) { segPoint = p3; break }
+    }
+    if (segPoint) point = segPoint
     window.harness.clearOps()
     const probe = window.harness.dragProbe(point.x, point.y, point.x, point.y - 40, 6)
-    check('band drag shows a live offset tooltip', probe.tips[probe.tips.length - 1] && probe.tips[probe.tips.length - 1].display === 'block',
-      JSON.stringify(probe.tips[0]))
+    const tips = probe.tips || []
+    check('band drag shows a live offset tooltip', tips[tips.length - 1] && tips[tips.length - 1].display === 'block',
+      JSON.stringify(tips[0] || probe))
     const moved = await waitOp('move_segment')
     check('band drag commits move_segment', moved, JSON.stringify(window.__OPS__.slice(-1)))
     const op = lastOp('move_segment')
@@ -397,6 +429,15 @@ window.runSpec = async function runSpec() {
         for (let i = 1; i <= 8; i += 1) {
           window.dispatchEvent(new PointerEvent('pointermove', { clientX: df.x + (dt.x - df.x) * i / 8, clientY: df.y + (dt.y - df.y) * i / 8, buttons: 1, bubbles: true, pointerId: 1, pointerType: 'mouse' }))
         }
+        const pv = document.querySelector('#dshv-line-preview')
+        check('the connect preview shows an arrow head and distinct ends',
+          !!pv && !!pv.querySelector('.pv-head') && !!pv.querySelector('.pv-start')
+            && !!pv.querySelector('.pv-end'),
+          JSON.stringify(pv && { head: !!pv.querySelector('.pv-head'), start: !!pv.querySelector('.pv-start') }))
+        const tip8 = window.harness.tooltip()
+        check('the connect tooltip names the start and end shapes',
+          /起点/.test(String(tip8 && tip8.text)) && /终点/.test(String(tip8 && tip8.text)),
+          String(tip8 && tip8.text))
         window.dispatchEvent(new PointerEvent('pointerup', { clientX: dt.x, clientY: dt.y, button: 0, bubbles: true, pointerId: 1, pointerType: 'mouse' }))
         const connected = await waitOp('connect')
         const cop = lastOp('connect')
@@ -405,6 +446,49 @@ window.runSpec = async function runSpec() {
           !!cop && !!cop.from_port && !!cop.to_port, JSON.stringify(cop && { f: cop.from_port, t: cop.to_port }))
         await new Promise((r) => setTimeout(r, 600))
       }
+    }
+
+    // ---- 12. dragging the line BODY translates it; only the blue dot bends it --
+    {
+      // A short run has no blue dot, so its body can be grabbed as a whole.
+      await window.harness.setRoute(CONN, SHORT_ROUTE)
+      await window.harness.clickShape(CONN)
+      await new Promise((r) => setTimeout(r, 700))
+      // Pick the band that belongs to CONN, not just the first one in the DOM.
+      const bandEl = document.querySelector('[data-route-band="' + CONN + '"]')
+      if (bandEl) {
+        const rb = bandEl.getBoundingClientRect()
+        // Short runs have no blue segment dot, so the midpoint is grabable line
+        // body (that is the whole point of dropping the dot on short runs).
+        const from = { x: rb.left + rb.width / 2, y: rb.top + rb.height / 2 }
+        window.harness.clearOps()
+        const el = document.elementFromPoint(from.x, from.y)
+        el.dispatchEvent(new PointerEvent('pointerdown', { clientX: from.x, clientY: from.y, button: 0, buttons: 1, bubbles: true, cancelable: true, pointerId: 1, pointerType: 'mouse' }))
+        for (let i = 1; i <= 6; i += 1) {
+          window.dispatchEvent(new PointerEvent('pointermove', { clientX: from.x, clientY: from.y - 30 * i / 6, buttons: 1, bubbles: true, pointerId: 1, pointerType: 'mouse' }))
+        }
+        window.dispatchEvent(new PointerEvent('pointerup', { clientX: from.x, clientY: from.y - 30, button: 0, bubbles: true, pointerId: 1, pointerType: 'mouse' }))
+        await new Promise((r) => setTimeout(r, 900))
+        // Only ops for THIS connector count: an earlier gesture may still be
+        // settling in the background and emit a move_segment for another shape.
+        const ops = window.__OPS__.filter((o) => o.shape_id === CONN).map((o) => o.action)
+        check('dragging the line body moves the whole connector, not one run',
+          ops.includes('move') && !ops.includes('move_segment'), JSON.stringify(ops))
+      }
+    }
+
+    // ---- 13. right-button drag pans the canvas ------------------------------
+    {
+      const wrap = document.querySelector('.dshv-canvasWrap')
+      const before = wrap.scrollTop
+      const b = wrap.getBoundingClientRect()
+      const x = b.left + b.width / 2, y = b.top + b.height / 2
+      const el = document.elementFromPoint(x, y)
+      el.dispatchEvent(new PointerEvent('pointerdown', { clientX: x, clientY: y, button: 2, buttons: 2, bubbles: true, cancelable: true, pointerId: 2, pointerType: 'mouse' }))
+      window.dispatchEvent(new PointerEvent('pointermove', { clientX: x, clientY: y - 60, buttons: 2, bubbles: true, pointerId: 2, pointerType: 'mouse' }))
+      window.dispatchEvent(new PointerEvent('pointerup', { clientX: x, clientY: y - 60, button: 2, bubbles: true, pointerId: 2, pointerType: 'mouse' }))
+      check('right-button drag pans the canvas', Math.abs(wrap.scrollTop - before) > 20,
+        JSON.stringify({ before, after: wrap.scrollTop }))
     }
 
     // ---- 11. a new shape lands in a free spot and is selected at once --------
@@ -490,21 +574,41 @@ window.runSpec = async function runSpec() {
     // ---- 9. the grid must scale with the page, not with a pixel constant ----
     {
       const page = document.querySelector('.dshv-page')
-      const cells = () => {
-        const cs = getComputedStyle(page)
+      const grid = document.querySelector('.dshv-gridLayer')
+      const measure = () => {
+        const svg = document.querySelector('.dshv-svgHost svg')
+        const cs = getComputedStyle(grid)
         const unit = parseFloat((cs.backgroundSize || '').split(',')[0])
-        const w = page.getBoundingClientRect().width
-        return { unit: Math.round(unit * 100) / 100, w: Math.round(w), cells: w / unit }
+        const vb = svg.viewBox.baseVal
+        const pxX = svg.getBoundingClientRect().width / vb.width
+        const pxY = svg.getBoundingClientRect().height / vb.height
+        // Shape #1 is 2.2 x 0.9 inch; it must always span 8.8 x 3.6 cells.
+        const g1 = document.querySelector('[data-shape-id="1"] path').getBoundingClientRect()
+        return {
+          unit, pxX, pxY,
+          cellIn: unit / pxX,
+          aspectErr: Math.abs(pxX - pxY) / pxX,
+          wCells: g1.width / unit, hCells: g1.height / unit,
+        }
       }
-      const expect = (window.__STATE__.pageSize.w || 11) / 0.25
-      const before = cells()
+      const before = measure()
       const zin = Array.from(document.querySelectorAll('.dshv-zbtn')).find((b) => b.textContent === '+')
       zin.click(); zin.click()
       await new Promise((r) => setTimeout(r, 800))
-      const after = cells()
-      check('grid cells stay a fixed fraction of the page when zooming',
-        Math.abs(before.cells - after.cells) < 0.3 && Math.abs(after.cells - expect) < 1.5,
-        JSON.stringify({ before, after, expect }))
+      const after = measure()
+      check('grid cells are square and use the same x/y scale as the shapes',
+        before.aspectErr < 0.001 && after.aspectErr < 0.001,
+        JSON.stringify({ before: before.aspectErr, after: after.aspectErr }))
+      check('a 2.2 x 0.9in shape spans a constant number of grid cells at any zoom',
+        Math.abs(before.cellIn - 0.25) < 0.001 && Math.abs(after.cellIn - 0.25) < 0.001
+          && Math.abs(before.wCells - after.wCells) < 0.02
+          && Math.abs(before.hCells - after.hCells) < 0.02,
+        JSON.stringify({ before: { c: before.cellIn, w: before.wCells, h: before.hCells },
+          after: { c: after.cellIn, w: after.wCells, h: after.hCells } }))
+      check('the continuous grid shows through a transparent page',
+        !!grid && !!getComputedStyle(grid).backgroundImage.match(/linear-gradient/)
+          && getComputedStyle(page).backgroundColor === 'rgba(0, 0, 0, 0)',
+        JSON.stringify({ bg: getComputedStyle(page).backgroundColor }))
       const zout = Array.from(document.querySelectorAll('.dshv-zbtn')).find((b) => b.textContent === '\u2212')
       zout.click(); zout.click()
       await new Promise((r) => setTimeout(r, 600))
@@ -685,6 +789,18 @@ window.harness = {
       markerMatchesCommit: close(markerSheet, committed, 0.02),
       landedOnMarker: close(landed, markerSheet, 0.02),
     }
+  },
+  /** Write an explicit route so a test can rely on long/short runs. */
+  setRoute: async (id, points) => {
+    const st = window.__STATE__
+    if (!st) return false
+    await fetch('/dsh-visio/op', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'set_route', path: st.path, page: st.page || 1, shape_id: id, points }),
+    })
+    await new Promise((r) => setTimeout(r, 500))
+    return true
   },
   /** Clear a hand-drawn route so the connector falls back to the router. */
   resetRoute: async (id) => {

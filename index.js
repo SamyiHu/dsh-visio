@@ -14,7 +14,7 @@
  */
 import { spawn } from 'node:child_process'
 import { access } from 'node:fs/promises'
-import { statSync } from 'node:fs'
+import { statSync, readFileSync } from 'node:fs'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -24,6 +24,8 @@ const STDOUT_LIMIT = 32 * 1024 * 1024
 const ENGINE_TIMEOUT_MS = 30000
 
 const here = dirname(fileURLToPath(import.meta.url))
+// Read the manifest once so /config reports the same build as the panel footer.
+const pkg = JSON.parse(readFileSync(join(here, 'package.json'), 'utf8'))
 const BRIDGE = join(here, 'engine', 'visio_bridge.py')
 
 const ENGINE_FILES = ['vsdx_core.py', 'visio_bridge.py', 'kinds.py', 'stencil.py', 'blank_doc.py', 'vsdx_png.py']
@@ -748,7 +750,7 @@ export function apply(ctx, config = {}) {
           folderOk,
           python: pythonOf(config),
           pythonOk,
-          engine: 'visio_bridge/1.0.0',
+          engine: `visio_bridge/${pkg.version}`,
         })
       }),
       route(ctx, `${ROUTE_PREFIX}/op`, ['POST'], async ({ request, response }) => {

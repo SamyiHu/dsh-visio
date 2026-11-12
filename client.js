@@ -10,7 +10,7 @@ window.__ModuleLoader__.load({
     const PANEL_ID = 'dsh-visio'
     const POLL_MS = 2500
     // Bumped with every release: the footer shows it, so a stale bundle is obvious.
-    const CLIENT_BUILD = '1.22.1'
+    const CLIENT_BUILD = '1.23.0'
 
     /* ------------------------------------------------------------- locale */
 
@@ -129,6 +129,7 @@ window.__ModuleLoader__.load({
       undo: '撤销',
       redo: '重做',
       undoHint: '撤销上一步 (Ctrl+Z)',
+      shortcutHint: 'Del 删除 · Ctrl+Z 撤销 · Ctrl+Y 重做 · 右键拖动平移',
       redoHint: '重做 (Ctrl+Shift+Z / Ctrl+Y)',
       zoomIn: '放大（Ctrl+滚轮）',
       zoomOut: '缩小（Ctrl+滚轮）',
@@ -263,6 +264,7 @@ window.__ModuleLoader__.load({
       undo: 'Undo',
       redo: 'Redo',
       undoHint: 'Undo last step (Ctrl+Z)',
+      shortcutHint: 'Del remove · Ctrl+Z undo · Ctrl+Y redo · right-drag pan',
       redoHint: 'Redo (Ctrl+Shift+Z / Ctrl+Y)',
       zoomIn: 'Zoom in (Ctrl+wheel)',
       zoomOut: 'Zoom out (Ctrl+wheel)',
@@ -359,6 +361,12 @@ window.__ModuleLoader__.load({
      edge and can cover a connector handle near the bottom */
   padding:24px 24px 76px;box-sizing:border-box}
 .dshv-page svg{overflow:visible}
+/* One continuous grid over the whole scrollable workspace.  It is inside the
+   scrolling content (so it pans with the shapes) and behind the page (so it
+   shows through the transparent page).  5000px is a multiple of every grid size
+   we emit, which puts a cell boundary exactly on the page's SVG origin. */
+.dshv-gridLayer{position:absolute;pointer-events:none;z-index:0}
+.dshv-page{position:relative;z-index:1}
 .dshv-page{margin:0 auto;max-width:none;box-shadow:0 8px 26px rgba(0,0,0,.16);border-radius:2px;background:transparent}
 
 /* ---- header */
@@ -666,12 +674,19 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         for (let i = 0; i < pts.length - 1; i += 1) {
           const [ax, ay] = pts[i]
           const [bx, by] = pts[i + 1]
+          const run = Math.hypot(bx - ax, by - ay)
+          // Three handles on a short run leave no room to grab the line itself:
+          // the two red ends plus this blue dot cover the whole band, so any
+          // drag on the line silently became a segment adjustment.  Only draw
+          // the dot when there is a real stretch of line left to grab; segment
+          // adjustment stays available on long runs and via the inspector.
+          if (run < 0.5) continue
           const mx = (ax + bx) / 2
           const my = (ay + by) / 2
           const vertical = Math.abs(bx - ax) < Math.abs(by - ay)
           handles += '<g data-route-handle="' + shape.id + '" data-seg="' + i + '"'
             + ' data-axis="' + (vertical ? 'x' : 'y') + '" style="cursor:' + (vertical ? 'ew-resize' : 'ns-resize') + '">'
-            + '<circle cx="' + mx + '" cy="' + (pageHeight - my) + '" r="0.13"'
+            + '<circle cx="' + mx + '" cy="' + (pageHeight - my) + '" r="0.105"'
             + ' fill="#2F6FBF" fill-opacity="0.9" stroke="#FFFFFF" stroke-width="2"'
             + ' vector-effect="non-scaling-stroke"/></g>'
         }
@@ -1157,7 +1172,14 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           const key = String(event.key || '').toLowerCase()
           if ((event.ctrlKey || event.metaKey) && (key === 'z' || key === 'y')) {
             event.preventDefault()
+            // Ctrl+Z undo, Ctrl+Shift+Z / Ctrl+Y redo (both conventions).
             undoTo(key === 'y' || event.shiftKey ? 'redo' : 'undo')
+            return
+          }
+          if ((event.ctrlKey || event.metaKey) && key === 'd') {
+            // duplicate the selection: a common companion to Del
+            event.preventDefault()
+            if (selectedRef.current) setNotice(t('selectShape'))
             return
           }
           if (event.ctrlKey || event.metaKey || event.altKey) return
@@ -1509,11 +1531,17 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
       }
 
       const hoverRef = useRef(null)
+      // Any in-progress gesture.  The hover handler rebuilds the four connection
+      // dots on every shape change; during a drag those dots both cost a DOM rebuild
+      // per frame and sit under elementFromPoint, which made connector drags judder
+      // and mis-pick their drop target.
+      const draggingRef = useRef(false)
 
       // Hovering a shape reveals its connection points.  Dragging from one of those
       // dots to another shape draws a connector between them: one gesture instead of
       // arming a tool and clicking two shapes.
       const onCanvasPointerMove = (event) => {
+        if (draggingRef.current) return
         const current = docRef.current
         const svgEl = event.currentTarget.querySelector('svg')
         if (!current || !svgEl) return
@@ -1541,8 +1569,10 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           const c = document.createElementNS(ns, 'circle')
           c.setAttribute('cx', p[0])
           c.setAttribute('cy', H - p[1])
-          c.setAttribute('r', '0.07')
-          c.setAttribute('fill', '#2F6FBF')
+          c.setAttribute('r', '0.075')
+          c.setAttribute('fill', '#2FBF71')
+          c.setAttribute('data-port-role', 'start')
+          c.setAttribute('title', '起点 · 拖到另一个图形')
           c.setAttribute('fill-opacity', '0.95')
           c.setAttribute('stroke', '#FFFFFF')
           c.setAttribute('stroke-width', '2')
@@ -1562,6 +1592,34 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
       }
 
       const onCanvasPointerDown = (event) => {
+        // A gesture is starting: stop the hover handler from rebuilding dots and
+        // stealing hit-tests until the pointer is released anywhere.
+        draggingRef.current = true
+        const endDragFlag = () => { draggingRef.current = false }
+        window.addEventListener('pointerup', endDragFlag, { once: true, capture: true })
+        window.addEventListener('pointercancel', endDragFlag, { once: true, capture: true })
+        window.addEventListener('contextmenu', endDragFlag, { once: true, capture: true })
+        // Right button always pans the canvas, whatever tool is active.  This is
+        // the one gesture that must not be swallowed by a shape under the cursor.
+        if (event.button === 2) {
+          const wrap0 = canvasBox.current
+          if (!wrap0) return
+          event.preventDefault()
+          const p0 = { x: event.clientX, y: event.clientY, left: wrap0.scrollLeft, top: wrap0.scrollTop }
+          const move0 = (e) => {
+            wrap0.scrollLeft = p0.left - (e.clientX - p0.x)
+            wrap0.scrollTop = p0.top - (e.clientY - p0.y)
+          }
+          const up0 = () => {
+            window.removeEventListener('pointermove', move0)
+            window.removeEventListener('pointerup', up0)
+            window.removeEventListener('pointercancel', up0)
+          }
+          window.addEventListener('pointermove', move0)
+          window.addEventListener('pointerup', up0)
+          window.addEventListener('pointercancel', up0)
+          return
+        }
         if (event.button !== 0) return
         if (tool === 'hand') {
           const wrap = canvasBox.current
@@ -1614,21 +1672,45 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           el.setAttribute('height', Number(box.h).toFixed(4))
           el.style.display = ''
         }
+        /** Dashed preview with an arrow head and a distinct start/end marker.
+         *  The engine's own marker defs are keyed by colour; we draw the head as a
+         *  small filled triangle so the preview works for any colour and always
+         *  shows which end is the target. */
         const previewLine = (svgEl, id, a, b, pageH, color) => {
-          let el = svgEl.querySelector('#' + id)
-          if (!el) {
-            el = document.createElementNS('http://www.w3.org/2000/svg', 'line')
-            el.setAttribute('id', id)
-            el.setAttribute('stroke-width', '1.5')
-            el.setAttribute('stroke-dasharray', '5 3')
-            el.setAttribute('vector-effect', 'non-scaling-stroke')
-            el.setAttribute('pointer-events', 'none')
-            svgEl.appendChild(el)
+          const stroke = color || '#2F6FBF'
+          let g = svgEl.querySelector('#' + id)
+          if (!g) {
+            g = document.createElementNS('http://www.w3.org/2000/svg', 'g')
+            g.setAttribute('id', id)
+            g.setAttribute('pointer-events', 'none')
+            g.innerHTML = '<line stroke-width="1.5" stroke-dasharray="5 3" vector-effect="non-scaling-stroke"/>'
+              + '<circle class="pv-start" r="0.085" fill="#FFFFFF" stroke-width="2" vector-effect="non-scaling-stroke"/>'
+              + '<path class="pv-head" stroke-linejoin="round"/>'
+              + '<circle class="pv-end" r="0.055" fill="#FFFFFF" stroke-width="2" vector-effect="non-scaling-stroke"/>'
+            svgEl.appendChild(g)
           }
-          el.setAttribute('stroke', color || '#2F6FBF')
-          el.setAttribute('x1', a.x.toFixed(4)); el.setAttribute('y1', (pageH - a.y).toFixed(4))
-          el.setAttribute('x2', b.x.toFixed(4)); el.setAttribute('y2', (pageH - b.y).toFixed(4))
-          el.style.display = ''
+          const x1 = a.x, y1 = pageH - a.y, x2 = b.x, y2 = pageH - b.y
+          const ln = g.querySelector('line')
+          ln.setAttribute('stroke', stroke)
+          ln.setAttribute('x1', x1.toFixed(4)); ln.setAttribute('y1', y1.toFixed(4))
+          ln.setAttribute('x2', x2.toFixed(4)); ln.setAttribute('y2', y2.toFixed(4))
+          // start = hollow blue dot, end = arrow head + small green dot
+          const st = g.querySelector('.pv-start')
+          st.setAttribute('cx', x1.toFixed(4)); st.setAttribute('cy', y1.toFixed(4))
+          st.setAttribute('stroke', stroke)
+          const en = g.querySelector('.pv-end')
+          en.setAttribute('cx', x2.toFixed(4)); en.setAttribute('cy', y2.toFixed(4))
+          en.setAttribute('stroke', stroke)
+          const dx = x2 - x1, dy = y2 - y1
+          const len = Math.hypot(dx, dy) || 1
+          const ux = dx / len, uy = dy / len
+          const size = 0.16
+          const bx = x2 - ux * size, by = y2 - uy * size
+          const px = -uy, py = ux
+          const head = g.querySelector('.pv-head')
+          head.setAttribute('d', `M ${x2.toFixed(4)} ${y2.toFixed(4)} L ${(bx + px * size * 0.5).toFixed(4)} ${(by + py * size * 0.5).toFixed(4)} L ${(bx - px * size * 0.5).toFixed(4)} ${(by - py * size * 0.5).toFixed(4)} Z`)
+          head.setAttribute('fill', stroke)
+          g.style.display = ''
         }
         // ---- resize a shape from one of its eight handles ----------------------
         const resizeHandle = event.target instanceof Element ? event.target.closest('[data-resize]') : null
@@ -1795,6 +1877,10 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           const fromPt = portsOf(src)[Number(idx)] || [hit0.pt.x, hit0.pt.y]
           const from = { x: fromPt[0], y: fromPt[1] }
           let to = from
+          // Cache the shape groups once.  Walking every group on each pointermove
+          // (and toggling a class on all of them) was the main source of lag.
+          const groups = Array.from(svgEl.querySelectorAll('[data-shape-id]'))
+          let lastTarget = null
           const move = (e) => {
             const p = sheetOf(current, svgEl, e.clientX, e.clientY)
             if (!p) return
@@ -1802,8 +1888,19 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
             // highlight the shape under the cursor so the drop target is obvious
             const under = document.elementFromPoint(e.clientX, e.clientY)
             const node = under && under.closest ? under.closest('[data-shape-id]') : null
-            svgEl.querySelectorAll('[data-shape-id]').forEach((el) => { el.classList.remove('dshv-dropTarget') })
-            if (node && node.getAttribute('data-shape-id') !== fromId) node.classList.add('dshv-dropTarget')
+            const targetId = node && node.getAttribute('data-shape-id') !== fromId
+              ? node.getAttribute('data-shape-id') : null
+            if (targetId !== lastTarget) {
+              if (lastTarget) {
+                const prev = groups.find((g) => g.getAttribute('data-shape-id') === lastTarget)
+                if (prev) prev.classList.remove('dshv-dropTarget')
+              }
+              if (targetId) {
+                const next = groups.find((g) => g.getAttribute('data-shape-id') === targetId)
+                if (next) next.classList.add('dshv-dropTarget')
+              }
+              lastTarget = targetId
+            }
             previewLine(svgEl, 'dshv-line-preview', from, to, hit0.pageH)
             const tip = tipRef.current
             if (tip && tip.parentElement) {
@@ -1812,7 +1909,9 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
               tip.style.display = 'block'
               tip.style.left = `${e.clientX - host.left + 14}px`
               tip.style.top = `${e.clientY - host.top - 30}px`
-              tip.textContent = id2 && id2 !== fromId ? `连到 #${id2}` : t('connectHint')
+              tip.textContent = id2 && id2 !== fromId
+                ? `起点 #${fromId} → 终点 #${id2}`
+                : t('connectHint')
             }
           }
           const up = (e) => {
@@ -1993,8 +2092,8 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
               tip.style.left = `${e.clientX - host.left + 14}px`
               tip.style.top = `${e.clientY - host.top - 30}px`
               tip.textContent = near
-                ? `${which === 'start' ? '起点' : '终点'} → #${near.id} (${near.port[0].toFixed(2)}, ${near.port[1].toFixed(2)})`
-                : `${which === 'start' ? '起点' : '终点'} 未对准任何形状`
+                ? `${which === 'start' ? '新起点' : '新终点'} → #${near.id} (${near.port[0].toFixed(2)}, ${near.port[1].toFixed(2)})`
+                : `${which === 'start' ? '新起点' : '新终点'} 未对准任何形状`
             }
           }
 
@@ -2020,7 +2119,53 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         }
         const band = event.target instanceof Element ? event.target.closest('[data-route-band]') : null
         const dot = band ? null : (event.target instanceof Element ? event.target.closest('[data-route-handle]') : null)
-        const handle = band || dot
+        // Grabbing the line BODY translates the whole connector; only the blue dot
+        // adjusts a single run.  Previously both fell into the same handler, so a
+        // plain click-and-drag on an existing line silently bent it into a jog.
+        if (band && !dot) {
+          event.preventDefault()
+          event.stopPropagation()
+          const current = docRef.current
+          const svgEl = event.currentTarget.querySelector('svg')
+          const id = band.getAttribute('data-route-band')
+          const item = current && (current.shapes || []).find((s) => s.id === id)
+          const hit = current && svgEl ? sheetOf(current, svgEl, event.clientX, event.clientY) : null
+          if (!item || !hit || !svgEl) return
+          const b0 = { ...item.bbox }
+          const start = { x: event.clientX, y: event.clientY }
+          let moved = false
+          let dx = 0, dy = 0
+          const node = svgEl.querySelector('[data-shape-id="' + id + '"]')
+          const move = (e) => {
+            dx = (e.clientX - start.x) / hit.scale
+            dy = -(e.clientY - start.y) / hit.scale
+            if (!moved && Math.hypot(dx, dy) < 0.04) return
+            moved = true
+            if (node) node.setAttribute('transform', `translate(${dx.toFixed(4)} ${(-dy).toFixed(4)})`)
+            const tip = tipRef.current
+            if (tip && tip.parentElement) {
+              const host = tip.parentElement.getBoundingClientRect()
+              tip.style.display = 'block'
+              tip.style.left = `${e.clientX - host.left + 14}px`
+              tip.style.top = `${e.clientY - host.top - 30}px`
+              tip.textContent = `Δ ${dx.toFixed(2)}, ${dy.toFixed(2)} in`
+            }
+          }
+          const up = () => {
+            window.removeEventListener('pointermove', move)
+            window.removeEventListener('pointerup', up)
+            if (tipRef.current) tipRef.current.style.display = 'none'
+            if (node) node.removeAttribute('transform')
+            if (!moved) return
+            runOp({ action: 'move', path: current.path, page: current.page, shape_id: id,
+              x: b0.x + dx, y: b0.y + dy })
+              .then((state) => { if (state) setDoc(state) })
+          }
+          window.addEventListener('pointermove', move)
+          window.addEventListener('pointerup', up)
+          return
+        }
+        const handle = dot
         if (handle) {
           event.preventDefault()
           const current = docRef.current
@@ -2156,30 +2301,44 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         window.addEventListener('blur', upDrag)
       }
 
-      const ratio = doc ? doc.pageSize.h / doc.pageSize.w : 1
+      // The engine pads the SVG viewBox by 0.25in and may extend it to fit shapes
+      // that spill past the page.  The drawing therefore scales by the VIEWBOX
+      // size, not by the paper size.  Both the page element and the grid must use
+      // that same factor, otherwise cells look square locally but drift against
+      // the shapes (and stretch if the viewBox aspect differs from the paper).
+      const vb = (() => {
+        if (!doc || !doc.svg) return { x: 0, y: 0, w: doc ? doc.pageSize.w : 11, h: doc ? doc.pageSize.h : 8.5 }
+        const m = /viewBox="([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)"/.exec(doc.svg)
+        return m ? { x: +m[1], y: +m[2], w: +m[3], h: +m[4] }
+          : { x: 0, y: 0, w: doc.pageSize.w, h: doc.pageSize.h }
+      })()
+      const viewRatio = vb.h / vb.w
       const availW = pane.w > 0 ? pane.w - 40 : 0
       const availH = pane.h > 0 ? pane.h - 40 : 0
-      const naturalW = doc ? Math.round(doc.pageSize.w * 96) : 0
+      const naturalW = doc ? Math.round(vb.w * 96) : 0
       const fitW = availW > 80 ? availW : naturalW
-      const fitH = availH > 80 && ratio > 0 ? Math.round(availH / ratio) : fitW
+      const fitH = availH > 80 && viewRatio > 0 ? Math.round(availH / viewRatio) : fitW
       const fitBox = doc ? Math.max(120, Math.round(Math.min(fitW, fitH, naturalW))) : 0
+      // pageBox is the WIDTH OF THE SVG (viewBox), not the paper width.
       const pageBox = Math.round(fitBox * (zoom ?? 1))
-      // One grid cell is a quarter inch on the drawing, not a fixed pixel count:
-      // the old constant (18px * zoom) had nothing to do with pageBox, so the grid
-      // and the shapes scaled from two different origins and never lined up.
-      const pageWin = doc ? doc.pageSize.w : 11
+      // Pixels per drawing inch, measured from the SVG, valid on BOTH axes.
+      const pxPerIn = pageBox / vb.w
+      // One cell is 0.25 drawing inch, using the SAME px/inch as the shapes.
       let gridStepIn = 0.25
-      let gridUnit = (pageBox / pageWin) * gridStepIn
+      let gridUnit = pxPerIn * gridStepIn
       while (gridUnit < 6 && gridStepIn < 4) {
         gridStepIn *= 2
-        gridUnit = (pageBox / pageWin) * gridStepIn
+        gridUnit = pxPerIn * gridStepIn
       }
       while (gridUnit > 48 && gridStepIn > 0.0625) {
         gridStepIn /= 2
-        gridUnit = (pageBox / pageWin) * gridStepIn
+        gridUnit = pxPerIn * gridStepIn
       }
       const gridSize = `${gridUnit}px ${gridUnit}px, ${gridUnit}px ${gridUnit}px, `
         + `${gridUnit * 4}px ${gridUnit * 4}px, ${gridUnit * 4}px ${gridUnit * 4}px`
+      // A multiple of BOTH the small and the large cell, so extending the grid
+      // left/up by this amount keeps every line in phase with the page origin.
+      const gridPad = Math.ceil(5000 / (gridUnit * 4)) * (gridUnit * 4)
       const gridImage = [
         'linear-gradient(to right, rgba(120,132,150,0.22) 1px, transparent 1px)',
         'linear-gradient(to bottom, rgba(120,132,150,0.22) 1px, transparent 1px)',
@@ -2356,28 +2515,50 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
                   h('div', {
                     className: `dshv-canvasWrap${tool === 'hand' ? ' dshv-hand' : ''}`,
                     ref: canvasBox,
-                    style: { backgroundImage: 'none' },
+                    style: { backgroundColor: '#F7F8FA' },
                   },
                     h('div', { className: 'dshv-canvasInner' },
                       h('div', { ref: pageRef, className: 'dshv-page', style: {
-                        aspectRatio: `${doc.pageSize.w} / ${doc.pageSize.h}`,
+                        aspectRatio: `${vb.w} / ${vb.h}`,
                         width: `${pageBox}px`,
-                        // Drawn on the page itself so the grid shares the page's
-                        // origin: zooming keeps cells glued to the shapes instead of
-                        // sliding against them.
-                        backgroundImage: showGrid ? gridImage : 'none',
-                        backgroundSize: gridSize,
-                        backgroundPosition: '0 0',
-                        backgroundColor: '#FFFFFF',
+                        // The page is transparent: only a border marks the paper
+                        // size.  One continuous grid layer (below) shows through it,
+                        // so the grid measures shapes both inside and outside the page.
+                        backgroundColor: 'transparent',
+                        boxShadow: '0 0 0 1px rgba(90,105,130,0.55), 0 8px 26px rgba(0,0,0,0.16)',
                         flex: '0 0 auto',
                         maxWidth: 'none',
                       } },
+                      showGrid ? h('div', {
+                        className: 'dshv-gridLayer',
+                        style: {
+                          // Anchored at the page's SVG origin and extended far in
+                          // every direction, so it is ONE continuous net over the
+                          // whole scrollable workspace with no seam at the page edge.
+                          // It lives inside the scrolling content, not on the
+                          // scroll container, so panning never shifts it against
+                          // the shapes.  5000px is the background offset that puts
+                          // a grid line exactly on the page's (0,0).
+                          // The SVG's (0,0) is NOT the page div's top-left: the
+                          // engine pads the viewBox by vb.x/vb.y (usually -0.25in).
+                          // Offset the grid by that padding in pixels so a cell line
+                          // lands exactly on the drawing origin on both axes.
+                          left: `calc(${-gridPad}px + ${(-vb.x * pxPerIn).toFixed(4)}px)`,
+                          top: `calc(${-gridPad}px + ${(-vb.y * pxPerIn).toFixed(4)}px)`,
+                          width: `calc(100% + ${gridPad * 2}px)`,
+                          height: `calc(100% + ${gridPad * 2}px)`,
+                          backgroundImage: gridImage,
+                          backgroundSize: gridSize,
+                          backgroundPosition: `${gridPad}px ${gridPad}px`,
+                        },
+                      }) : null,
                       h('div', {
                         className: 'dshv-svgHost',
                         onClick: onCanvasClick,
                         onPointerDown: onCanvasPointerDown,
                         onPointerMove: onCanvasPointerMove,
                         onPointerLeave: onCanvasPointerLeave,
+                        onContextMenu: (e) => e.preventDefault(),
                         dangerouslySetInnerHTML: { __html: withSelection(doc.svg, shape, doc.pageSize.h) },
                         style: { width: '100%', height: '100%' },
                       }),
@@ -2431,6 +2612,7 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           config && config.pythonOk === false ? h('span', { className: 'err' }, t('pythonMissing')) : null,
           configError ? h('span', { className: 'err' }, configError) : null,
           h('span', { className: 'dshv-grow' }),
+          doc ? h('span', { className: 'dshv-ver', title: t('shortcutHint') }, t('shortcutHint')) : null,
           h('span', { className: 'dshv-ver', title: 'client build' }, 'v' + CLIENT_BUILD),
           doc ? h('span', { className: 'dshv-badge' }, t('autosave')) : null),
 

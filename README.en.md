@@ -3,14 +3,16 @@
 [![CI](https://github.com/SamyiHu/dsh-visio/actions/workflows/ci.yml/badge.svg)](https://github.com/SamyiHu/dsh-visio/actions/workflows/ci.yml)
 
 A native **Visio (.vsdx) viewer and editor for the DeepSeek Harness (DSH) Web UI**, with a
-live preview, shape editing and a `visio` agent tool.  Pure Python engine, no Visio install,
-no Office dependency.
+live preview, shape editing and a `visio` agent tool.  The core engine is Python standard
+library, with no Visio install and no Office dependency; PNG export, `snapshot` and stencil
+previews additionally need [Pillow](https://pillow.readthedocs.io/) (`engine/vsdx_png.py`,
+`engine/svg_raster.py`).
 
 English · [简体中文](README.md)
 
 ![status](https://img.shields.io/badge/status-beta-yellow)
 ![license](https://img.shields.io/badge/license-MIT-blue)
-![engine](https://img.shields.io/badge/engine-python--stdlib-green)
+![engine](https://img.shields.io/badge/engine-python--stdlib--%2B--Pillow--for--PNG-green)
 
 ![panel](docs/panel.png)
 
@@ -46,7 +48,7 @@ Manual equivalent: add `"@local/dsh-visio": "link:/absolute/path/to/dsh-visio"` 
 `package.json`, run `pnpm install`, then reload the app.  The bundle patch
 `cordis.patch.yml` inserts the plugin automatically.
 
-Requires Python 3.9+ on `PATH` (or set `pythonPath` in the plugin config / `DSH_VISIO_PYTHON`).
+Requires Python 3.9+ on `PATH` (or set `pythonPath` in the plugin config / `DSH_VISIO_PYTHON`). For PNG export / snapshots / stencil previews, install Pillow for that interpreter: `python -m pip install Pillow`.
 
 ## Usage
 
@@ -67,12 +69,23 @@ Requires Python 3.9+ on `PATH` (or set `pythonPath` in the plugin config / `DSH_
 | `pythonPath` | `python` | interpreter used for the engine |
 | `defaultFolder` | workspace dir | where the file browser starts |
 
+## Compatibility
+
+| component | requirement | notes |
+|---|---|---|
+| Node.js | **>= 18** | Host half `index.js` uses ESM, `node:` imports and `import.meta.url`; CI runs on Node 20 |
+| Python | **>= 3.9** | Engine interpreter: `python` on Windows, `python3` elsewhere; override with `pythonPath` / `DSH_VISIO_PYTHON`. CI runs on 3.12 |
+| Pillow | optional | Only PNG export, `snapshot` and stencil previews need it; core read/write and SVG rendering are stdlib |
+| DSH host | `>=0.1.7-rc.2` (`dsh.engines.dsh`); **guaranteed on `0.2.2-rc.1`** | desktop profile / Web UI plugin. The build it was first developed against (2026-10-28 first commit) works, but its exact version was not recorded; some earlier builds may work and are not guaranteed. `peerDependencies["@deepseek-ai/dsh"]` lists each prerelease branch explicitly so semver does not silently exclude prereleases |
+
+Machine-readable declarations live in `package.json`: `engines.node`, `dsh.engines.dsh` (informational; pnpm only WARNs by default) and `peerDependencies["@deepseek-ai/dsh"]` (the range npm/pnpm actually validates). Python / Pillow are runtime prerequisites of the plugin itself, see above.
+
 ## Architecture
 
 ```
 index.js            Host half: `visio` tool + same-origin routes, bridge pool
 client.js           Client half: panel, floating window, inspector, i18n
-engine/vsdx_core.py Reader/editor/renderer (OPC + XML, stdlib only)
+engine/vsdx_core.py Reader/editor/renderer (OPC + XML, stdlib only; PNG paths use Pillow)
 engine/visio_bridge.py  JSON line protocol used by the Host
 engine/blank_doc.py     Creates a minimal valid .vsdx from scratch
 engine/kinds.py         16 built-in shape kinds (real master geometry)

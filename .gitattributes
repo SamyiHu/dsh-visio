@@ -1,0 +1,4 @@
+* text=auto eol=lf
+*.vsdx binary
+*.png binary
+*.vssx binary

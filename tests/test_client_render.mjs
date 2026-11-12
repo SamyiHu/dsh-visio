@@ -195,13 +195,16 @@ assert.equal(findAll(fabOnly, (node) => node.props?.className === 'dshv-fab').le
 
 const canvasWrap = findAll(loadedTree, (n) => String(n.props?.className || '').includes('dshv-canvasWrap'))[0]
 assert.ok(canvasWrap, 'canvas wrap missing')
-// The grid belongs to the page, not to the scroll area: sharing the page's origin
-// is what keeps the cells locked to the drawing while zooming.
-assert.equal(String(canvasWrap.props.style.backgroundImage), 'none', 'grid must not sit on the scroll area')
+// One continuous grid layer spans the scrollable workspace, behind a
+// transparent page.  It is in-phase with the shapes at every zoom level.
+const gridEl = findAll(loadedTree, (n) => String(n.props?.className || '').includes('dshv-gridLayer'))[0]
+assert.ok(gridEl, 'grid layer missing')
+assert.match(String(gridEl.props.style.backgroundImage), /linear-gradient/, 'grid gradient missing')
+assert.match(String(gridEl.props.style.backgroundSize), /\d+(\.\d+)?px \d+(\.\d+)?px/, 'grid size missing')
 const pageEl = findAll(loadedTree, (n) => String(n.props?.className || '').includes('dshv-page'))[0]
 assert.ok(pageEl, 'page element missing')
-assert.match(String(pageEl.props.style.backgroundImage), /linear-gradient/, 'grid gradient missing')
-assert.match(String(pageEl.props.style.backgroundSize), /\d+(\.\d+)?px \d+(\.\d+)?px/, 'grid size missing')
+assert.equal(String(pageEl.props.style.backgroundColor), 'transparent', 'page must be transparent so the grid shows through')
+assert.ok(String(pageEl.props.style.boxShadow).includes('1px'), 'page size border missing')
 
 
 console.log('ok — zoom toolbar renders')

@@ -31,7 +31,16 @@ try:
 except Exception:
     pass
 
-ENGINE_VERSION = "1.0.0"
+# One source of truth: the plugin version in package.json.  The bridge used to
+# report a hard-coded 1.0.0 forever, so the engine string in /config and /ping
+# disagreed with the build shown in the panel footer.
+try:
+    import json as _json
+    with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                           "package.json"), "r", encoding="utf-8") as _fh:
+        ENGINE_VERSION = _json.load(_fh)["version"]
+except Exception:
+    ENGINE_VERSION = "0.0.0"
 MAX_BACKUPS = 20
 DRAWING_EXT = (".vsdx", ".vsdm")
 BAD_NAME = re.compile(r'[\\/:*?"<>|\r\n\t]')

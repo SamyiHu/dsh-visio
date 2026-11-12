@@ -1,5 +1,56 @@
 # Changelog
 
+## 1.23.0 — 2026-11-12
+
+Connector interaction polish, keyboard shortcuts and a full-workspace grid.
+
+- **Connector drags no longer judder.** The hover handler rebuilt four connection dots
+  on every `pointermove` during a drag; they also sat under `elementFromPoint` and
+  made the drop target flicker. Hover work is now suspended for the whole gesture, and
+  drop-target groups are cached once instead of queried every frame.
+- **The connect preview has an arrow head and distinct ends**: a hollow start dot and a
+  filled arrow head at the target, so direction is obvious before releasing. Hover dots
+  are green (start), the tooltip reads `起点 #A → 终点 #B`, and re-glue says 新起点/新终点.
+- **Grabbing an existing line moves the whole connector** (a plain `move`) instead of
+  bending one run (`move_segment`). Only the blue segment dot adjusts a run now, so a
+  click-and-drag on a line can no longer silently turn it into a jog.
+- **Right-button drag pans the canvas** in any tool, and the native context menu is
+  suppressed on the canvas.
+- **Keyboard shortcuts**: `Del`/`Backspace` delete, `Ctrl+Z` undo, `Ctrl+Shift+Z` /
+  `Ctrl+Y` redo, `Esc` deselect. A hint sits in the status bar so they are discoverable.
+- **The grid is one continuous net across the whole workspace, including inside the
+  page.** It is a measuring aid for comparing shape sizes, so it must stay visible
+  over the paper rather than stopping at its edge. The page is now transparent with
+  only a size border; the grid lives in the scrolling content layer (so panning
+  cannot shift it against the shapes) and its offset is a multiple of the cell size
+  (so a grid line always lands exactly on the page's SVG origin at any zoom).
+  Cells stay a quarter inch of the drawing. The cell size and the page element's
+  aspect ratio are derived from the SVG `viewBox` (which the engine pads by 0.25in and
+  may extend for off-page shapes), not from the paper size: using two different scales
+  made the grid drift against the shapes and stretch the drawing on the y axis. Grid
+  origin also compensates for the `viewBox.x/y` padding. Verified at 64% / 100% / 195%:
+  x and y px-per-inch agree within 0.001%, and a 2.2 x 0.9in shape always spans
+  8.8 x 3.6 cells.
+- `ENGINE_VERSION` and the `/config` engine string now read `package.json` instead of
+  a hard-coded `1.0.0`, so the build shown in the panel and reported by the engine
+  agree. `tests/test_client_contract.mjs` asserts `CLIENT_BUILD === package.version`.
+- **Compatibility declared the way the awesome-list expects.** Its `contributing.md`
+  requires official `@deepseek-ai/*` packages as `peerDependencies` and warns that a
+  peer range without explicit prerelease branches silently excludes every prerelease
+  harness build. `package.json` now has `engines.node >=18`, `dsh.engines.dsh
+  >=0.1.7-rc.2`, and `peerDependencies["@deepseek-ai/dsh"]` with explicit `||`
+  branches (`^0.1.7-rc.2 || ^0.2.0-rc.1 || ^0.2.1-rc.1 || ^0.2.2-rc.1`). Verified with
+  node-semver: `0.2.2-rc.1` (the guaranteed host) and the early `0.1.7-rc.2` both match,
+  `0.3.0` does not. Both READMEs gained a Compatibility section distinguishing the
+  guaranteed version, the first-build version, and earlier builds that are not guaranteed;
+  `tests/test_client_contract.mjs` asserts the fields stay present.
+- **Dependency documentation corrected** after upstream review: the core engine is
+  stdlib-only, but PNG export, `snapshot` and stencil previews need Pillow. Both READMEs
+  (and the awesome-list entry) now state Python 3.9+ on `PATH` and Pillow for those paths.
+- `.gitattributes` pins LF so editor CRLF churn no longer shows whole-file diffs.
+- Client render test updated for the workspace grid; browser harness grew to 37 assertions
+  (preview direction, line-body drag, right-button pan, grid coverage).
+
 ## 1.22.1 — 2026-11-02
 
 - **A new shape no longer lands on top of the previous one.** Every insert was placed at

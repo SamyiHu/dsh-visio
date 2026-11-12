@@ -32,6 +32,16 @@ vm.runInNewContext(source, sandbox)
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
   const build = /const CLIENT_BUILD = '([^']+)'/.exec(readFileSync(new URL('../client.js', import.meta.url), 'utf8'))
   assert.equal(build && build[1], pkg.version, 'CLIENT_BUILD must match package.json version')
+  // Declared compatibility must stay in the manifest: the host does not enforce it,
+  // so a missing field would silently leave users without the prerequisites.
+  assert.equal(pkg.engines && pkg.engines.node, '>=18', 'engines.node must declare the Node floor')
+  assert.equal(pkg.dsh && pkg.dsh.engines && pkg.dsh.engines.dsh, '>=0.1.7-rc.2',
+    'dsh.engines.dsh must declare the DSH host floor')
+  const peer = pkg.peerDependencies && pkg.peerDependencies['@deepseek-ai/dsh']
+  assert.ok(peer && /0\.2\.2-rc\.1/.test(peer) && /0\.1\.7-rc\.2/.test(peer),
+    'peerDependencies must explicitly cover the guaranteed 0.2.2-rc.1 and the early 0.1.7-rc.2 prerelease')
+  assert.ok(peer && peer.includes('||'),
+    'peer range must use explicit prerelease branches, per the awesome-list contributing guide')
 }
 
 assert.ok(loaded, 'window.__ModuleLoader__.load was never called')

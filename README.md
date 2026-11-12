@@ -4,13 +4,13 @@
 
 **在 DeepSeek Harness（DSH）Web 界面里直接看和改 Visio 图纸（.vsdx）的插件**：实时预览、形状编辑，外加一个给 Agent 用的 `visio` 工具。
 
-引擎是纯 Python 标准库实现，**不需要装 Visio，也不依赖 Office**。
+引擎主体（.vsdx 读写、渲染、编辑）只用 Python 标准库，**不需要装 Visio，也不依赖 Office**；PNG 导出、`snapshot` 快照和模具预览图额外需要 [Pillow](https://pillow.readthedocs.io/)（`engine/vsdx_png.py`、`engine/svg_raster.py`）。
 
 [English](README.en.md) · 简体中文
 
 ![status](https://img.shields.io/badge/status-beta-yellow)
 ![license](https://img.shields.io/badge/license-MIT-blue)
-![engine](https://img.shields.io/badge/engine-python--stdlib-green)
+![engine](https://img.shields.io/badge/engine-python--stdlib--%2B--Pillow--for--PNG-green)
 
 ## 功能
 
@@ -33,7 +33,7 @@ dsh plugin install /absolute/path/to/dsh-visio
 
 手动等价做法：在 profile 的 `package.json` 里加 `"@local/dsh-visio": "link:/absolute/path/to/dsh-visio"`，执行 `pnpm install`，再重载应用。插件自带 `cordis.patch.yml`，会自动插入。
 
-需要 `PATH` 里有 Python 3.9+（或在插件配置里设 `pythonPath`，或设环境变量 `DSH_VISIO_PYTHON`）。
+需要 `PATH` 里有 Python 3.9+（或在插件配置里设 `pythonPath`，或设环境变量 `DSH_VISIO_PYTHON`）；若要用 PNG 导出 / 快照 / 模具预览，还需为该解释器安装 Pillow：`python -m pip install Pillow`。
 
 ## 使用
 
@@ -51,6 +51,17 @@ dsh plugin install /absolute/path/to/dsh-visio
 |---|---|---|
 | `pythonPath` | `python` | 引擎使用的解释器 |
 | `defaultFolder` | 工作目录 | 文件浏览器起始目录 |
+
+## 兼容性
+
+| 组件 | 要求 | 说明 |
+|---|---|---|
+| Node.js | **≥ 18** | 宿主半 `index.js` 用 ESM + `node:` 前缀导入 + `import.meta.url`；CI 在 Node 20 上跑 |
+| Python | **≥ 3.9** | 引擎解释器，默认 Windows 用 `python`、其他系统用 `python3`；可用 `pythonPath` / `DSH_VISIO_PYTHON` 指定。CI 在 3.12 上跑 |
+| Pillow | 可选 | 仅 PNG 导出、`snapshot`、模具预览需要；核心读写与 SVG 渲染是标准库 |
+| DSH 宿主 | `>=0.1.7-rc.2`（`dsh.engines.dsh`）；**保证 `0.2.2-rc.1`** | desktop profile / Web UI 插件。初制作期（2026-10-28 首版）的版本可用但仓库未记录确切号；更早的部分 0.2.x 之前版本可能可用、不保证。`peerDependencies["@deepseek-ai/dsh"]` 显式列出各预发布分支，避免 semver 静默排除 prerelease |
+
+机器可读声明在 `package.json`：`engines.node`、`dsh.engines.dsh`（声明性，pnpm 默认只 WARN）与 `peerDependencies["@deepseek-ai/dsh"]`（npm/pnpm 真正校验的范围）。Python / Pillow 为插件自身运行前置，见上表。
 
 ## 结构
 
