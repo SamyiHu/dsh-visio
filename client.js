@@ -2385,17 +2385,26 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         gridStepIn /= 2
         gridUnit = pxPerIn * gridStepIn
       }
-      const gridSize = `${gridUnit}px ${gridUnit}px, ${gridUnit}px ${gridUnit}px, `
-        + `${gridUnit * 4}px ${gridUnit * 4}px, ${gridUnit * 4}px ${gridUnit * 4}px`
+      // The grid is a reference, not decoration: at 0.22/0.42 grey it competed
+      // with the connector lines drawn over it.  Fine cells also disappear when
+      // they would be denser than ~12px, so a zoomed-out map keeps only the 4x
+      // rhythm instead of turning into graph paper.
+      const showMinorGrid = gridUnit >= 12
+      const gridSize = (showMinorGrid
+        ? `${gridUnit}px ${gridUnit}px, ${gridUnit}px ${gridUnit}px, `
+        : '') + `${gridUnit * 4}px ${gridUnit * 4}px, ${gridUnit * 4}px ${gridUnit * 4}px`
       // A multiple of BOTH the small and the large cell, so extending the grid
       // left/up by this amount keeps every line in phase with the page origin.
       const gridPad = Math.ceil(5000 / (gridUnit * 4)) * (gridUnit * 4)
-      const gridImage = [
-        'linear-gradient(to right, rgba(120,132,150,0.22) 1px, transparent 1px)',
-        'linear-gradient(to bottom, rgba(120,132,150,0.22) 1px, transparent 1px)',
-        'linear-gradient(to right, rgba(120,132,150,0.42) 1px, transparent 1px)',
-        'linear-gradient(to bottom, rgba(120,132,150,0.42) 1px, transparent 1px)',
-      ].join(',')
+      const gridLayers = (showMinorGrid ? [
+        'linear-gradient(to right, rgba(120,132,150,0.07) 1px, transparent 1px)',
+        'linear-gradient(to bottom, rgba(120,132,150,0.07) 1px, transparent 1px)',
+      ] : [])
+      gridLayers.push(
+        'linear-gradient(to right, rgba(120,132,150,0.15) 1px, transparent 1px)',
+        'linear-gradient(to bottom, rgba(120,132,150,0.15) 1px, transparent 1px)',
+      )
+      const gridImage = gridLayers.join(',')
 
       const pythonBroken = config && config.pythonOk === false
       const nothingOpen = !doc
