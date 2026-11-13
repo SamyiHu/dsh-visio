@@ -53,6 +53,7 @@ def _ensure_masters_part(doc):
     rel.set("Type", "http://schemas.microsoft.com/visio/2010/relationships/masters")
     rel.set("Target", "masters/masters.xml")
     doc.parts[rels_name] = ET.tostring(rels_root, encoding="utf-8", xml_declaration=True)
+    doc._xmlcache.pop(rels_name, None)
 
 
 def _override_content_type(doc, part_name, content_type):
@@ -149,6 +150,11 @@ def import_master(doc, stencil_path, master_id):
     rel.set("Type", MASTER_TYPE)
     rel.set("Target", os.path.basename(dst_part))
     doc.parts[rels_name] = ET.tostring(rels_root, encoding="utf-8", xml_declaration=True)
+    # Drop the parsed copy of the relationship list: the next masters() call
+    # would otherwise see the old rels and treat the imported master as missing.
+    doc._xmlcache.pop(rels_name, None)
+    if getattr(doc, "_msize", None) is not None:
+        doc._msize.clear()
 
     clone = copy.deepcopy(master_el)
     clone.set("ID", new_id)

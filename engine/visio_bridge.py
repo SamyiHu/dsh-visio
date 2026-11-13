@@ -392,11 +392,23 @@ def action_stencil_list(req):
 def action_stencil_add(req):
     import stencil
     path = drawing_path(req.get("path"))
-    file = text(req.get("file"), "file", 1000).strip()
+    file = text(req.get("file") or req.get("stencil"), "file", 1000).strip()
+    if not file:
+        raise BadRequest("stencil file is required (pass stencil=<path to .vssx>)")
     master = text(req.get("master"), "master", 40).strip()
     doc = load_doc(path)
     page = page_of(req.get("page"), doc.pages)
-    new_id = stencil.import_master(doc, file, master)
+    masters = stencil.list_masters(file)
+    if str(master).isdigit():
+        target = str(master)
+    else:
+        wanted = str(master).strip().lower()
+        found = next((m for m in masters if str(m["name"]).strip().lower() == wanted), None)             or next((m for m in masters if wanted and wanted in str(m["name"]).lower()), None)
+        if found is None:
+            raise BadRequest("master %r not found; available: %s"
+                             % (master, ", ".join(m["name"] for m in masters)))
+        target = found["id"]
+    new_id = stencil.import_master(doc, file, target)
     sid = stencil.add_instance(doc, new_id, page=page,
                                x=req.get("x"), y=req.get("y"),
                                w=req.get("w"), h=req.get("h"),

@@ -701,7 +701,7 @@ ${formatState(state)}`.trim() }
           return { text: ['rendered ' + result.pages + ' page(s):'].concat(result.files).join(String.fromCharCode(10)) }
         }
         if (action === 'stencils') {
-          const result = await runBridge(config, { action: 'stencil_list', file: args.file || args.path })
+          const result = await runBridge(config, { action: 'stencils', file: args.file || args.path })
           const rows = (result.masters || []).map((m) => '#' + m.id + ' ' + m.name)
           return { text: rows.join(String.fromCharCode(10)) }
         }
