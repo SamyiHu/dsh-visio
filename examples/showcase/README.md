@@ -7,12 +7,12 @@
 
 每个案例同时提供导出的 `*.png`。
 
-## UI 截图 `ui/`
+## UI 截图
+
+见仓库根目录 `docs/`：
 
 | 截图 | 说明 |
 |---|---|
-| `panel-overview.png` | 面板总览：左侧页面/形状树，中间画布（网格只在纸面内），底部状态条 |
-| `shape-inspector.png` | 选中形状：八个缩放手柄 + 旋转/连接点手柄；右侧 TEXT / GEOMETRY / STYLE（含线型）/ SHAPEDATA 可编辑 |
-| `connector-inspector.png` | 选中连接线：ROUTE 区可调起点/终点方向，STYLE 区可选实线/虚线/点线/点划线/无 |
-
-截图来自仓库自带的 `tests/serve_engine.py` + `tests/interactive.html`（真实 client.js + 真实引擎）。
+| `docs/panel-showcase.png` | 面板总览：页面/形状树、画布（网格铺满工作区，纸面用蓝框标出），底部状态条 |
+| `docs/editor-shape.png` | 选中形状：缩放手柄 + TEXT / 位置与大小 / 外观（含线型）/ 形状数据 |
+| `docs/editor-connector.png` | 选中连接线：起点/终点方向、自动走线、线型 |

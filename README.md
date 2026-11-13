@@ -12,6 +12,27 @@
 ![license](https://img.shields.io/badge/license-MIT-blue)
 ![engine](https://img.shields.io/badge/engine-python--stdlib--%2B--Pillow--for--PNG-green)
 
+## 截图
+
+| 面板 | 选中形状（可编辑） |
+|---|---|
+| ![面板](docs/panel-showcase.png) | ![编辑形状](docs/editor-shape.png) |
+
+选中连接线后，可调起点/终点方向与线型：
+
+![编辑连接线](docs/editor-connector.png)
+
+## 展示案例
+
+| 案例 | 内容 | 语言 |
+|---|---|---|
+| [全球订单履约](examples/showcase/showcase-1-global-fulfilment.vsdx) | 4 泳道 / 15 节点 / 3 决策门 / 3 条退回线 | 中 · 英 · 日 |
+| [平台逻辑架构](examples/showcase/showcase-2-platform-architecture.vsdx) | 接入/服务/数据三层容器 + 外部系统 | 中 · 英 · 俄 |
+
+![全球订单履约](examples/showcase/showcase-1-global-fulfilment.png)
+
+![平台逻辑架构](examples/showcase/showcase-2-platform-architecture.png)
+
 ## 功能
 
 - **实时预览**：面板把 `.vsdx` 页面渲染成 SVG，每次改动后立即重绘。

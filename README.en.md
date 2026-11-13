@@ -14,11 +14,27 @@ English · [简体中文](README.md)
 ![license](https://img.shields.io/badge/license-MIT-blue)
 ![engine](https://img.shields.io/badge/engine-python--stdlib--%2B--Pillow--for--PNG-green)
 
-![panel](docs/panel.png)
 
-![demo](docs/demo-p1.png)
+## Screenshots
 
-> Rendered by the plugin's own renderer (`snapshot`); the source is `examples/demo.vsdx`.
+| Panel | Shape selected (editable) |
+|---|---|
+| ![panel](docs/panel-showcase.png) | ![shape editor](docs/editor-shape.png) |
+
+Select a connector to change its end directions and line style:
+
+![connector editor](docs/editor-connector.png)
+
+## Showcase
+
+| Sample | What it shows | Languages |
+|---|---|---|
+| [Global order fulfilment](examples/showcase/showcase-1-global-fulfilment.vsdx) | 4 swimlanes / 15 nodes / 3 gates / 3 rework loops | zh · en · ja |
+| [Platform architecture](examples/showcase/showcase-2-platform-architecture.vsdx) | Edge / service / data layers plus external systems | zh · en · ru |
+
+![global fulfilment](examples/showcase/showcase-1-global-fulfilment.png)
+
+![platform architecture](examples/showcase/showcase-2-platform-architecture.png)
 
 ## Features
 
