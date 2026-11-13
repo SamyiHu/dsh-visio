@@ -41,3 +41,9 @@ DSH 默认不带索引源。两个办法：
 
 - 应用内：Settings → Plugins → 搜 `dsh-visio`
 - 命令行：`dsh plugin --profile desktop add dsh-visio`
+
+## 0. 没有 npm 账号时的临时通道
+
+- 用户安装：`dsh plugin --profile desktop add github:SamyiHu/dsh-visio`
+- 市场索引：`publish/index-entry.json` 已改为 `source: { type: "git", commit: <sha> }`，可直接放自建 index 源被 Discover 读取。
+- 想进 Settings → Plugins 的搜索入口，仍然需要 npm 包（注册免费账号即可）。

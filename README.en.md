@@ -59,6 +59,11 @@ Select a connector to change its end directions and line style:
 dsh plugin --profile desktop add dsh-visio
 ```
 
+> No npm release yet? Install straight from GitHub:
+> ```bash
+> dsh plugin --profile desktop add github:SamyiHu/dsh-visio
+> ```
+
 **Local development:** add `"dsh-visio": "link:/absolute/path/to/dsh-visio"` to the profile
 `package.json`, run `pnpm install`, then reload the app. The bundle patch
 `cordis.patch.yml` inserts the plugin automatically.

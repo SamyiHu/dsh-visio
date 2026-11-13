@@ -51,6 +51,11 @@
 dsh plugin --profile desktop add dsh-visio
 ```
 
+> 还没有 npm 包时，可直接从 GitHub 源安装：
+> ```bash
+> dsh plugin --profile desktop add github:SamyiHu/dsh-visio
+> ```
+
 **本地开发**：在 profile 的 `package.json` 里加 `"dsh-visio": "link:/absolute/path/to/dsh-visio"`，执行 `pnpm install`，再重载应用。插件自带 `cordis.patch.yml`，会自动插入。
 
 需要 `PATH` 里有 Python 3.9+（或在插件配置里设 `pythonPath`，或设环境变量 `DSH_VISIO_PYTHON`）；若要用 PNG 导出 / 快照 / 模具预览，还需为该解释器安装 Pillow：`python -m pip install Pillow`。
