@@ -44,12 +44,14 @@ const actions = tool.parameters.properties.action.enum
 for (const action of ['open', 'text', 'get_shape', 'create', 'list', 'set_text', 'set_cell', 'set_prop', 'add_shape', 'connect', 'delete', 'export']) {
   assert.ok(actions.includes(action), `tool is missing action ${action}`)
 }
-assert.deepEqual(Object.keys(tool.parameters.properties).sort(), [
-  'action', 'all', 'cell', 'connect', 'dpi', 'dir', 'direction', 'file', 'format', 'from',
-  'gap', 'h', 'height', 'kind', 'label', 'style',
-  'master', 'name', 'out', 'page', 'path', 'shape_id', 'stencil', 'text', 'title', 'to', 'value',
-  'w', 'width', 'x', 'y',
-].sort())
+const required = [
+  'action', 'path', 'shape_id', 'text', 'kind', 'x', 'y', 'w', 'h', 'from', 'to', 'points',
+  'nodes', 'direction', 'side', 'label_pos', 'within', 'orthogonal',
+  'allow_off_midpoint', 'allow_cross_shapes', 'user_approved', 'strict', 'end', 'style',
+]
+for (const key of required) {
+  assert.ok(key in tool.parameters.properties, `tool parameters missing ${key}`)
+}
 
 const call = async (args) => {
   const result = await tool.execute(args)

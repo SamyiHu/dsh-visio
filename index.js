@@ -489,6 +489,7 @@ const TOOL_PARAMETERS = {
     orthogonal: { type: 'boolean', description: 'connect_styled: reject diagonal segments instead of drawing them (default true). Pass false only for a deliberate diagonal.' },
     within: { type: 'array', items: { type: 'number' }, description: 'connect_styled: [x, y, w, h] in inches. Every waypoint must stay inside this box (e.g. a lane) or the call is rejected.' },
     label_pos: { description: 'connect_styled: where the label goes — auto | above | below | left | right | [x, y] in inches. Non-auto modes nudge the label off any shape it would cover.' },
+    allow_cross_shapes: { type: 'boolean', description: 'connect_styled: allow a segment to pass through an unrelated shape. Requires user_approved=true — ask the user first.' },
     allow_off_midpoint: { type: 'boolean', description: 'connect_styled: allow an end to sit on a shape border away from the four side midpoints. Requires user_approved=true — ask the user first and quote their approval.' },
     user_approved: { type: 'boolean', description: 'Set only after the user explicitly agreed to bypass the midpoint rule in this conversation.' },
     strict: { type: 'boolean', description: 'audit_full: fail (ok=false) when any error or warning remains.' },
@@ -510,6 +511,7 @@ const TOOL_PARAMETERS = {
     angle: { type: 'number', description: 'add_shape/move: rotation in degrees, counter-clockwise.' },
     shape_ids: { type: 'array', description: 'align: list of shape ids to snap together.' },
     mode: { type: 'string', enum: ['edges', 'centres', 'ports'], description: 'align: which reference lines to snap to.' },
+    end: { type: 'string', enum: ['start', 'end'], description: 'move_endpoint / set_end_direction: which end of the connector to adjust.' },
     direction: { type: 'string', enum: ['top', 'bottom', 'left', 'right'], description: 'set_end_direction: which side of the shape the connector end should leave from.' },
     shape: { type: 'object', description: 'shape_save: the shape spec to cache (must contain kind or geometry).' },
     review: { type: 'boolean', description: 'snapshot: attach a structured overlap/out-of-page/text-overflow/connectivity report. Use review=true as the CHECK STAGE of every drawing task.' },
@@ -730,7 +732,8 @@ ${formatState(state)}`.trim() }
             line_width: args.line_width,
             line_width: args.line_width, from_port: args.from_port, to_port: args.to_port,
             orthogonal: args.orthogonal, within: args.within, label_pos: args.label_pos,
-            allow_off_midpoint: args.allow_off_midpoint, user_approved: args.user_approved })
+            allow_off_midpoint: args.allow_off_midpoint, allow_cross_shapes: args.allow_cross_shapes,
+            user_approved: args.user_approved })
           return { text: 'connector #' + r.connector + ' (' + r.points + ' waypoints, ' + r.line_color + (r.dashed ? ', dashed' : '') + ')' }
         }
         if (action === 'add_anchor') {

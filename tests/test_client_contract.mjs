@@ -35,7 +35,7 @@ vm.runInNewContext(source, sandbox)
   // Declared compatibility must stay in the manifest: the host does not enforce it,
   // so a missing field would silently leave users without the prerequisites.
   assert.equal(pkg.engines && pkg.engines.node, '>=18', 'engines.node must declare the Node floor')
-  assert.equal(pkg.dsh && pkg.dsh.engines && pkg.dsh.engines.dsh, '>=0.1.7-rc.2',
+  assert.equal(pkg.dsh && pkg.dsh.engines && pkg.dsh.engines.dsh, '>=0.2.1-rc.1 <0.3.0-0',
     'dsh.engines.dsh must declare the DSH host floor')
   const peer = pkg.peerDependencies && pkg.peerDependencies['@deepseek-ai/dsh']
   assert.ok(peer && /0\.2\.2-rc\.1/.test(peer) && /0\.1\.7-rc\.2/.test(peer),
@@ -60,7 +60,7 @@ const plugin = loaded.factory((id) => {
   throw new Error(`unexpected require(${id})`)
 })
 
-assert.equal(loaded.id, '@local/dsh-visio')
+assert.equal(loaded.id, 'dsh-visio')
 assert.equal(JSON.stringify(plugin.inject), JSON.stringify(['slots', 'locale']))
 assert.equal(typeof plugin.apply, 'function')
 
@@ -105,7 +105,7 @@ function makeContext() {
 plugin.apply(makeContext())
 
 assert.equal(calls.effects, 1, 'apply must register exactly one dispose effect')
-assert.ok(calls.locales.includes('@local/dsh-visio'), 'locale namespace not registered')
+assert.ok(calls.locales.includes('dsh-visio'), 'locale namespace not registered')
 assert.ok(calls.dictionaries?.zh && calls.dictionaries?.en, 'zh/en dictionaries missing')
 
 const main = calls.slots.find((slot) => slot.name === 'main')
