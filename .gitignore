@@ -19,3 +19,4 @@ tests/fixtures/_live.vsdx
 
 examples/*.png
 npm-login.out
+.local/
