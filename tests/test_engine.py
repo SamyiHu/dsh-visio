@@ -906,6 +906,75 @@ class ConnectorEditTests(unittest.TestCase):
         self.assertAlmostEqual(start[1], 5.0, places=3,
                                msg="the router moved the glued end away: %r" % (start,))
 
+    # ------------------------------------------------------- AI drawing tools
+    def test_freeform_geometry_renders_any_silhouette(self):
+        """The escape hatch: arbitrary vertices become a real Visio shape."""
+        path = self._new("freeform.vsdx")
+        doc = Vsdx(path)
+        sid = doc.add_shape(1, 1, 1, 0.6, 0.4, "", "rect", "#C55A1F", "#8A3D12",
+                            geometry=[(0, 0.5), (1, 0), (1, 1), (0, 0.5)])
+        doc.save(backup=False)
+        svg = Vsdx(path).to_svg(1, interactive=True, background=False)
+        self.assertIn(' Z', svg, "freeform polygon was not closed/rendered")
+        self.assertGreaterEqual(svg.count('<path'), 1)
+
+    def test_character_rows_give_two_line_coloured_text(self):
+        path = self._new("char.vsdx")
+        doc = Vsdx(path)
+        doc.add_shape(1, 1, 1, 2, 0.8, "Title\nSubtitle", "rect", "#17365D",
+                      "#17365D", font_color="#FFFFFF", font_size=12, bold=True)
+        doc.save(backup=False)
+        det = Vsdx(path).shape('1', 1)
+        self.assertTrue(det['sections'].get('Character'), "Character section missing")
+        self.assertEqual(len(det['sections']['Character'][0]['rows']), 2)
+
+    def test_shape_library_and_cache(self):
+        import visio_bridge as vb
+        built = vb.load_library()
+        self.assertIn('step', built)
+        self.assertIn('gate', built)
+        self.assertIn('arrow_head', built)
+        saved = vb.handle({'action': 'shape_save', 'name': '_unit_test_tmp',
+                           'shape': {'geometry': [[0.5, 0], [1, 0.5], [0.5, 1], [0, 0.5], [0.5, 0]],
+                                     'fill': '#C55A1F'}})
+        self.assertTrue(saved['rendered'])
+        self.assertIn('_unit_test_tmp', vb.load_library())
+        # clean the user library we just wrote
+        import json as _json
+        try:
+            with open(vb.user_lib_path(), 'r', encoding='utf-8') as fh:
+                data = _json.load(fh)
+            data.get('shapes', {}).pop('_unit_test_tmp', None)
+            with open(vb.user_lib_path(), 'w', encoding='utf-8') as fh:
+                _json.dump(data, fh, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    def test_audit_full_and_align(self):
+        import visio_bridge as vb
+        path = self._new("audit.vsdx")
+        doc = Vsdx(path)
+        doc.add_shape(1, 1, 1, 2, 1, "A", "rect")
+        doc.add_shape(1, 1.5, 1, 2, 1, "B", "rect")     # overlap
+        doc.add_shape(1, 20, 1, 2, 1, "C", "rect")      # out of page
+        doc.save(backup=False)
+        r = vb.handle({'action': 'audit_full', 'path': path})
+        codes = {i['code'] for i in r['issues']}
+        self.assertIn('overlap', codes)
+        self.assertIn('out-of-page', codes)
+        r2 = vb.handle({'action': 'align', 'path': path, 'shape_ids': ['1', '2', '3'], 'mode': 'edges'})
+        self.assertTrue(r2['moved'])
+
+    def test_agent_guide_contract(self):
+        import visio_bridge as vb
+        g = vb.handle({'action': 'guide'})
+        self.assertIn('add_shape', g['guide'])
+        self.assertIn('snapshot', g['guide'])
+        self.assertTrue(g['workflow'])
+        self.assertTrue(g['hard_rules'])
+        one = vb.handle({'action': 'guide', 'which': 'add_shape'})
+        self.assertIn('limits', one)
+        self.assertIn('escape hatch', one['limits'].lower())
     def test_svg_draws_the_same_polyline_the_panel_shows(self):
         """Rendering must use drawn_points(), not the raw Geometry rows."""
         path = self._new("render-parity.vsdx")

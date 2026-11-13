@@ -37,15 +37,14 @@ English · [简体中文](README.md)
 
 ## Install
 
+**From the plugin market (recommended):** open Settings → Plugins in DSH, search `dsh-visio`, install. Or:
+
 ```bash
-# 1. clone next to your other local bundles
-git clone https://github.com/SamyiHu/dsh-visio.git
-# 2. install into the running Harness (Reload DSH afterwards)
-dsh plugin install /absolute/path/to/dsh-visio
+dsh plugin --profile desktop add dsh-visio
 ```
 
-Manual equivalent: add `"@local/dsh-visio": "link:/absolute/path/to/dsh-visio"` to the profile
-`package.json`, run `pnpm install`, then reload the app.  The bundle patch
+**Local development:** add `"dsh-visio": "link:/absolute/path/to/dsh-visio"` to the profile
+`package.json`, run `pnpm install`, then reload the app. The bundle patch
 `cordis.patch.yml` inserts the plugin automatically.
 
 Requires Python 3.9+ on `PATH` (or set `pythonPath` in the plugin config / `DSH_VISIO_PYTHON`). For PNG export / snapshots / stencil previews, install Pillow for that interpreter: `python -m pip install Pillow`.

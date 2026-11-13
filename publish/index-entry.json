@@ -1,0 +1,48 @@
+{
+  "format": 1,
+  "title": {
+    "en": "DSH Visio",
+    "zh": "DSH Visio"
+  },
+  "plugins": [
+    {
+      "name": "dsh-visio",
+      "title": {
+        "en": "DSH Visio",
+        "zh": "DSH Visio 图纸"
+      },
+      "description": {
+        "en": "View and edit .vsdx drawings inside DSH, with a visio agent tool.",
+        "zh": "在 DSH 里直接看和改 Visio 图纸（.vsdx），并给 Agent 提供 visio 工具。"
+      },
+      "icon": "https://raw.githubusercontent.com/SamyiHu/dsh-visio/main/icon.svg",
+      "author": "SamyiHu",
+      "homepage": "https://github.com/SamyiHu/dsh-visio",
+      "repository": {
+        "url": "https://github.com/SamyiHu/dsh-visio"
+      },
+      "metadata": {
+        "category": "tools",
+        "keywords": [
+          "visio",
+          "vsdx",
+          "diagram",
+          "drawing",
+          "svg"
+        ]
+      },
+      "versions": [
+        {
+          "version": "1.24.0",
+          "publishTimestamp": 1794475091,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.1 <0.3.0-0"
+          }
+        }
+      ]
+    }
+  ]
+}

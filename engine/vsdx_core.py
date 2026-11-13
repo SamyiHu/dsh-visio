@@ -555,9 +555,77 @@ class Vsdx:
                 pass
         return str(top + 1)
 
+    @staticmethod
+    def _freeform_rows(geometry, w, h):
+        """Normalise a model-supplied vertex list into Geometry row dicts.
+
+        Accepts [(x, y), ...] (fractions 0..1 of w/h) or
+        [(row_type, x, y), ...].  Absolute values >1 are treated as inches.
+        """
+        out = []
+        for i, item in enumerate(geometry or []):
+            if isinstance(item, dict):
+                rt, x, y = item.get('T') or item.get('type') or ('RelMoveTo' if i == 0 else 'RelLineTo'), item.get('X', item.get('x', 0)), item.get('Y', item.get('y', 0))
+            elif len(item) == 3:
+                rt, x, y = item
+            else:
+                rt, x, y = ('RelMoveTo' if i == 0 else 'RelLineTo'), item[0], item[1]
+            x, y = float(x), float(y)
+            if abs(x) > 1.5 or abs(y) > 1.5:   # absolute inches
+                x, y = x / max(w, 1e-6), y / max(h, 1e-6)
+            out.append((rt, {"X": x, "Y": y}))
+        return out
+
+    @staticmethod
+    def _write_character(sh, text, color=None, size=None, bold=None):
+        """Give a shape explicit text colour/size/weight (Character section).
+
+        Mirrors real .vsdx files: one row per line with <cp IX> markers, so a
+        two-line label can be white-bold on the first line and light grey on the
+        second - the pattern used by professional swimlane drawings.
+        """
+        lines = str(text or "").split("\n")
+        for sec in sh.findall(_v("Section")):
+            if sec.get("N") == "Character":
+                sh.remove(sec)
+        t = sh.find(_v("Text"))
+        if t is not None:
+            for child in list(t):
+                t.remove(child)
+            t.text = None
+            for i, ln in enumerate(lines):
+                cp = ET.SubElement(t, _v("cp"))
+                cp.set("IX", str(i))
+                cp.tail = ("\n" if i else "") + ln
+        sec = ET.SubElement(sh, _v("Section"))
+        sec.set("N", "Character"); sec.set("IX", "0")
+        for i in range(len(lines)):
+            row = ET.SubElement(sec, _v("Row")); row.set("IX", str(i))
+            clr = color or "#1A1A1A"
+            if i > 0 and color and color.upper() in ("#FFFFFF", "#FEFFFF"):
+                clr = "#E6EDF7"
+            sz = (float(size) if size else 11.0) / 72.0
+            if i > 0:
+                sz *= 0.82
+            for nm, val in (("Color", clr), ("Size", round(sz, 6)),
+                            ("Style", 1 if (bold is not False and i == 0) else 0),
+                            ("Font", "Microsoft YaHei"), ("AsianFont", "Microsoft YaHei"),
+                            ("LangID", "zh-CN")):
+                c = ET.SubElement(row, _v("Cell"))
+                c.set("N", nm); c.set("V", str(val))
     def add_shape(self, page: int = 1, x: float = 1.0, y: float = 1.0,
                   w: float = 1.5, h: float = 0.75, text: str = "",
-                  kind: str = "rect", fill: str = None, line: str = None):
+                  kind: str = "rect", fill: str = None, line: str = None,
+                  geometry=None, font_color: str = None, font_size: float = None,
+                  bold: bool = None, line_pattern: int = None,
+                  line_width: float = None, angle: float = None, text_bg=None):
+        """Add a shape, optionally with an explicit freeform silhouette.
+
+        `geometry` is the escape hatch: [(row_type, x, y), ...] in 0..1 fractions
+        of w/h.  It overrides the built-in kind, so a model can compose any
+        outline (arrow heads, decision gates, lane decorations) with line stacks,
+        exactly the way the early drawings were produced.
+        """,
         part, root = self._page_root(page)
         shapes_el = root.find(_v("Shapes"))
         if shapes_el is None:
@@ -589,6 +657,14 @@ class Vsdx:
             "Rounding": 0,
             "ShdwPattern": 0,
         }
+        if line_width is not None:
+            cells["LineWeight"] = float(line_width)
+        if line_pattern is not None:
+            cells["LinePattern"] = int(line_pattern)
+        if angle is not None:
+            cells["Angle"] = float(angle)
+        if text_bg is not None:
+            cells["TextBkgnd"] = 1 if text_bg else 0
         for k, v in cells.items():
             c = ET.SubElement(sh, _v("Cell"))
             c.set("N", k)
@@ -597,11 +673,11 @@ class Vsdx:
             sec = None
             rows = []
         else:
-            rows = kinds.rows_for(kind, w, h) if kinds else [
+            rows = self._freeform_rows(geometry, w, h) if geometry else (kinds.rows_for(kind, w, h) if kinds else [
                 ("RelMoveTo", {"X": 0, "Y": 0}), ("RelLineTo", {"X": 1, "Y": 0}),
                 ("RelLineTo", {"X": 1, "Y": 1}), ("RelLineTo", {"X": 0, "Y": 1}),
                 ("RelLineTo", {"X": 0, "Y": 0}),
-            ]
+            ])
             sec = ET.SubElement(sh, _v("Section"))
             sec.set("N", "Geometry")
             sec.set("IX", "0")
@@ -621,6 +697,8 @@ class Vsdx:
                 c.set("V", str(v))
         if text:
             _set_shape_text(sh, text)
+        if font_color or font_size or bold is not None:
+            self._write_character(sh, text or "", font_color, font_size, bold)
         self._write_page(part, root)
         return sid
 
@@ -739,12 +817,15 @@ class Vsdx:
         return sid
 
     def connect(self, from_id, to_id, page: int = 1, label: str = "",
-                from_port=None, to_port=None):
+                from_port=None, to_port=None, line_width=None, line_color=None,
+                line_pattern=None):
         """Add a dynamic connector between two shapes.
 
         `from_port` / `to_port` pin the connector to a specific connection point
         when the caller knows which one the user grabbed; without them the end is
-        put on the box edge facing the other shape.
+        put on the box edge facing the other shape.  `line_width` (inches),
+        `line_color` and `line_pattern` let a generated diagram use visible
+        arrows without changing the defaults stored in existing drawings.
         """
         part, root = self._page_root(page)
         page_shapes = {s["id"]: s for s in self.shapes(page)}
@@ -795,8 +876,9 @@ class Vsdx:
             "LocPinX": round(abs(bx - ax) / 2.0, 6),
             "LocPinY": round(abs(by - ay) / 2.0, 6),
             "BeginX": ax, "BeginY": ay, "EndX": bx, "EndY": by,
-            "LineWeight": 0.01041666666666667,
-            "LineColor": "#404040",
+            "LineWeight": float(line_width) if line_width is not None else 0.01041666666666667,
+            "LineColor": line_color or "#404040",
+            "LinePattern": int(line_pattern) if line_pattern is not None else 1,
             "EndArrow": 4,
             "BeginArrow": 0,
         }
@@ -1121,6 +1203,108 @@ class Vsdx:
             out = pts[:i] + moved + pts[i + 2:]
         return self.set_route(shape_id, self._simplify(out), page=page)
 
+    def move_endpoint(self, shape_id, end, x, y, page: int = 1):
+        """Move one connector end to an exact point and drop that end's glue.
+
+        Unlike reglue() this does not hunt for a connection point: the caller has
+        already decided where the end goes (a free drag).  The polyline keeps its
+        right angles: the last run is re-squared rather than left diagonal.
+        """
+        if str(end) not in ("start", "end"):
+            raise VsdxError("end must be start or end")
+        part, root = self._page_root(page)
+        sid = str(shape_id)
+        target = None
+        for sh, _p, _d in self._iter_shapes(root.find(_v("Shapes"))):
+            if sh.get("ID") == sid:
+                target = sh
+                break
+        if target is None:
+            raise VsdxError("shape %s not found on page %d" % (shape_id, page))
+        prefix = "Begin" if end == "start" else "End"
+        conns = root.find(_v("Connects"))
+        if conns is not None:
+            for row in list(conns.findall(_v("Connect"))):
+                if row.get("FromSheet") == sid and row.get("FromCell") == prefix + "X":
+                    conns.remove(row)
+        x, y = float(x), float(y)
+        _geo, _origin, pts = self._route_rows(target)
+        if len(pts) >= 2:
+            pts = self._simplify(self._end_adjusted(pts, end, x, y))
+        for name, value in ((prefix + "X", x), (prefix + "Y", y)):
+            cell = _cell(target, name)
+            if cell is None:
+                cell = ET.SubElement(target, _v("Cell"))
+                cell.set("N", name)
+            cell.set("V", str(round(value, 6)))
+            if "F" in cell.attrib:
+                del cell.attrib["F"]
+        try:
+            bx = float(_cellv(target, "BeginX") or 0)
+            by = float(_cellv(target, "BeginY") or 0)
+            ex = float(_cellv(target, "EndX") or 0)
+            ey = float(_cellv(target, "EndY") or 0)
+        except ValueError:
+            bx = by = ex = ey = 0.0
+        w = abs(ex - bx)
+        h = abs(ey - by)
+        for name, value in (("PinX", (bx + ex) / 2.0), ("PinY", (by + ey) / 2.0),
+                            ("Width", w), ("Height", h),
+                            ("LocPinX", w / 2.0), ("LocPinY", h / 2.0)):
+            cell = _cell(target, name)
+            if cell is None:
+                cell = ET.SubElement(target, _v("Cell"))
+                cell.set("N", name)
+            cell.set("V", str(round(value, 6)))
+        if _geo is not None and len(pts) >= 2:
+            # Rows are stored relative to the shape origin, and the origin just moved
+            # with the new bounding box: rebase them or every point shifts twice.
+            ox = float(_cellv(target, "PinX") or 0) - float(_cellv(target, "LocPinX") or 0)
+            oy = float(_cellv(target, "PinY") or 0) - float(_cellv(target, "LocPinY") or 0)
+            self._write_route_rows(_geo, (ox, oy), pts)
+        self._write_page(part, root)
+        return {"ok": True, "shape_id": sid, "end": str(end),
+                "x": round(x, 4), "y": round(y, 4)}
+
+
+    def set_end_direction(self, shape_id, end, direction, page: int = 1):
+        """Make one end leave its shape from the requested side.
+
+        The end is re-glued to that side's connection point and the hand-drawn
+        geometry is dropped so the router lays the line out from the new side,
+        instead of keeping the old approach and bending back at the last inch.
+        """
+        if str(end) not in ("start", "end"):
+            raise VsdxError("end must be start or end")
+        direction = str(direction).lower()
+        if direction not in ("top", "bottom", "left", "right"):
+            raise VsdxError("direction must be top/bottom/left/right")
+        sid = str(shape_id)
+        prefix = "Begin" if end == "start" else "End"
+        conns = self._connects(self.page_part(page)).get(sid, [])
+        target = next((c["to"] for c in conns if c.get("cell") == prefix + "X"), None)
+        if target is None:
+            raise VsdxError("这一端还没有连到形状上：先把它拖到目标形状上，再调方向")
+        box = next((s["bbox"] for s in self.shapes(page) if s["id"] == str(target)), None)
+        if box is None:
+            raise VsdxError("shape %s not found" % target)
+        point = {"top": (box["x"] + box["w"] / 2.0, box["y"] + box["h"]),
+                 "bottom": (box["x"] + box["w"] / 2.0, box["y"]),
+                 "left": (box["x"], box["y"] + box["h"] / 2.0),
+                 "right": (box["x"] + box["w"], box["y"] + box["h"] / 2.0)}[direction]
+        self.reglue(sid, end, target, point[0], point[1], page)
+        part, root = self._page_root(page)
+        for sh, _p, _d in self._iter_shapes(root.find(_v("Shapes"))):
+            if sh.get("ID") != sid:
+                continue
+            for sec in list(sh.findall(_v("Section"))):
+                if sec.get("N") == "Geometry":
+                    sh.remove(sec)
+            break
+        self._write_page(part, root)
+        return {"ok": True, "shape_id": sid, "end": str(end), "direction": direction}
+
+
     def reglue(self, shape_id, end, to_id, x=None, y=None, page: int = 1):
         """Re-attach one end of a connector to another shape (drag the end handle).
 
@@ -1271,24 +1455,46 @@ class Vsdx:
                 c.set("N", name)
                 c.set("V", str(round(value, 6)))
 
+    @staticmethod
+    def _end_adjusted(pts, end, x, y):
+        """Points of a route whose end moved, with the least possible change.
+
+        The neighbouring bend follows the end instead of staying put: a horizontal
+        run slides vertically, a vertical run slides sideways.  Adding a fresh jog
+        at the old coordinate (what this used to do) made the line run out to the
+        old corner and come straight back, which reads as a glitch.
+        """
+        pts = [tuple(pt) for pt in pts]
+        x, y = float(x), float(y)
+        if str(end) == "start":
+            ax, ay = pts[1]
+            if abs(ay - pts[0][1]) < 1e-6:          # first run is horizontal
+                pts[1] = (ax, y)
+            elif abs(ax - pts[0][0]) < 1e-6:        # first run is vertical
+                pts[1] = (x, ay)
+            else:                                    # diagonal: square it off once
+                pts.insert(1, (pts[0][0], y))
+            pts[0] = (x, y)
+        else:
+            ax, ay = pts[-2]
+            if abs(ay - pts[-1][1]) < 1e-6:         # last run is horizontal
+                pts[-2] = (ax, y)
+            elif abs(ax - pts[-1][0]) < 1e-6:       # last run is vertical
+                pts[-2] = (x, ay)
+            else:
+                pts.insert(len(pts) - 1, (x, ay))
+            pts[-1] = (x, y)
+        return pts
+
     def _move_route_end(self, sh, end, x, y):
         """Move a hand-drawn connector end, keeping the route axis aligned."""
         geo, origin, pts = self._route_rows(sh)
         if geo is None or len(pts) < 2:
             return False
-        x, y = float(x), float(y)
-        if str(end) == "start":
-            if len(pts) == 2:
-                pts = [(x, y), (pts[1][0], y), pts[1]]
-            else:
-                pts = [(x, y), (x, pts[1][1])] + pts[1:]
-        else:
-            if len(pts) == 2:
-                pts = [pts[0], (pts[0][0], y), (x, y)]
-            else:
-                pts = pts[:-1] + [(pts[-2][0], y), (x, y)]
+        pts = self._end_adjusted(pts, end, x, y)
         self._write_route_rows(geo, origin, self._simplify(pts))
         return True
+
 
     def bend(self, shape_id, x, y, page: int = 1):
         """Insert a bend at (x, y): the connector keeps its ends and gains a corner."""
@@ -1361,6 +1567,24 @@ class Vsdx:
             self._write_page(part, root)
             return {"ok": True, "shape_id": str(shape_id), "cleared": True}
         raise VsdxError("connector %s not found" % shape_id)
+
+    def send_to_back(self, shape_id, page: int = 1):
+        """Move a shape to the bottom of the z-order (first child of Shapes).
+
+        A lane band has to be created after the nodes it contains, so it lands on
+        top of them; this puts it behind without re-creating anything.
+        """
+        part, root = self._page_root(page)
+        target = str(shape_id)
+        for container in root.iter(_v("Shapes")):
+            for sh in list(container.findall(_v("Shape"))):
+                if sh.get("ID") == target:
+                    container.remove(sh)
+                    container.insert(0, sh)
+                    self._write_page(part, root)
+                    return True
+        raise VsdxError("shape %s not found on page %d" % (shape_id, page))
+
 
     def delete_shape(self, shape_id, page: int = 1):
         """Delete a shape and every connector that dangles off it.
@@ -1770,6 +1994,7 @@ class Vsdx:
             "font_pt": font_pt,
             "weight_in": weight,
             "pattern": str(scalar("LinePattern", "1")),
+            "dash": str(scalar("LinePattern", "1")),
             "end_arrow": str(scalar("EndArrow", "0")),
             "theme": theme,
             "variants": v0,
@@ -2367,9 +2592,11 @@ class Vsdx:
                 d = "M %0.4f %0.4f" % (pts_[0][0], H - pts_[0][1])
                 for px, py in pts_[1:]:
                     d += " L %0.4f %0.4f" % (px, H - py)
-                out.append('<path d="%s" fill="none" stroke="%s" %s marker-start="%s" '
+                # LinePattern 2 = dashed: a rework / return link in a process map.
+                _dash = ' stroke-dasharray="0.24 0.15"' if str(cst.get('pattern') or '1') == '2' else ''
+                out.append('<path d="%s" fill="none" stroke="%s" %s%s marker-start="%s" '
                        'marker-end="%s" stroke-linejoin="round"/>'
-                       % (d, line_color, width_attr, marker_start, marker))
+                       % (d, line_color, width_attr, _dash, marker_start, marker))
             else:
                 # Both ends coincide: there is no line to draw.  A zero-length path
                 # still paints its arrow head, which looks like a line that broke off
@@ -2388,16 +2615,16 @@ class Vsdx:
                        'vector-effect="non-scaling-stroke" pointer-events="stroke"/>' % d)
             if s["text"]:
                 mx, my = (x1 + x2) / 2.0, H - (y1 + y2) / 2.0
-                # A 1-D shape's text pin lives in the shape's rotated frame; the cached
-                # value can sit far outside the line (0.86in in one file).  Only trust it
-                # when it is plausibly near the line's middle, otherwise centre the label.
+                # Trust the text pin unconditionally: move_label writes TxtPin*
+                # and the UI drag must actually move the label.  The old 0.3in
+                # guard snapped every deliberately repositioned label back to the
+                # middle of the line, which read as 'the text cannot be moved'.
                 if c.get("TxtPinX") is not None and c.get("TxtPinY") is not None:
                     try:
                         ox = float(c["TxtPinX"]) - float(c.get("LocPinX") or 0)
                         oy = float(c["TxtPinY"]) - float(c.get("LocPinY") or 0)
-                        if abs(ox) <= 0.3 and abs(oy) <= 0.3:
-                            mx = float(c.get("PinX") or 0) + ox
-                            my = float(c.get("PinY") or 0) + oy
+                        mx = float(c.get("PinX") or 0) + ox
+                        my = H - (float(c.get("PinY") or 0) + oy)
                     except (TypeError, ValueError):
                         pass
                 label = [ln for ln in s["text"].split("\n") if ln.strip()][:4]
@@ -2419,7 +2646,10 @@ class Vsdx:
         _conn = [c for c in out if c.strip() != '</svg>']
         # A line has no fill, so it must sit above the shapes: drawn underneath it
         # would simply disappear behind a white box.
-        out = _shape_out[:_k] + _conn + _shape_out[_k:] + _line_out + _close
+        # Shapes first, then connectors ON TOP of them.  Putting _conn before
+        # _shape_out made opaque lane bands and node boxes cover every arrow - a
+        # generated swimlane diagram looked like it had no connectors at all.
+        out = _shape_out[:_k] + _shape_out[_k:] + _conn + _line_out + _close
         return "\n".join(out)
 
     def save_svg(self, out_path: str, page: int = 1, show_ids: bool = False) -> str:

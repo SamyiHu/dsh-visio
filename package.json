@@ -1,7 +1,6 @@
 {
-  "name": "@local/dsh-visio",
-  "version": "1.23.0",
-  "private": true,
+  "name": "dsh-visio",
+  "version": "1.24.0",
   "type": "module",
   "description": "Visio (.vsdx) viewer/editor for the DeepSeek Harness Web UI: live SVG preview, shape editing, connectors and a visio agent tool.",
   "exports": {
@@ -17,10 +16,12 @@
     "locale/*.json",
     "icon.svg",
     "engine/*.py",
+    "engine/shape_library.json",
     "README.md"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=18",
+    "dsh": ">=0.2.1-rc.1 <0.3.0-0"
   },
   "dsh": {
     "manifestVersion": 1,
@@ -28,7 +29,7 @@
       "patch": "./cordis.patch.yml"
     },
     "engines": {
-      "dsh": ">=0.1.7-rc.2"
+      "dsh": ">=0.2.1-rc.1 <0.3.0-0"
     },
     "client": {
       "platform": "web",
@@ -40,7 +41,9 @@
     }
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh": "^0.1.7-rc.2 || ^0.2.0-rc.1 || ^0.2.1-rc.1 || ^0.2.2-rc.1"
+    "@deepseek-ai/dsh": "^0.1.7-rc.2 || ^0.2.0-rc.1 || ^0.2.1-rc.1 || ^0.2.2-rc.1",
+    "@deepseek-ai/dsh-client-locale": ">=0.1.7-rc.2 <0.3.0-0",
+    "@deepseek-ai/dsh-client-ui-theme": ">=0.1.7-rc.2 <0.3.0-0"
   },
   "license": "MIT",
   "repository": {
@@ -55,5 +58,6 @@
     "diagram",
     "svg"
   ],
-  "author": "SamyiHu"
+  "author": "SamyiHu",
+  "homepage": "https://github.com/SamyiHu/dsh-visio#readme"
 }

@@ -24,14 +24,13 @@
 
 ## 安装
 
+**从插件市场安装（推荐）**：DSH 里打开 Settings → Plugins，搜 `dsh-visio` 点安装；或命令行：
+
 ```bash
-# 1. 克隆到你的本地 bundle 目录旁
-git clone https://github.com/SamyiHu/dsh-visio.git
-# 2. 装进正在运行的 Harness（之后重载一次 DSH）
-dsh plugin install /absolute/path/to/dsh-visio
+dsh plugin --profile desktop add dsh-visio
 ```
 
-手动等价做法：在 profile 的 `package.json` 里加 `"@local/dsh-visio": "link:/absolute/path/to/dsh-visio"`，执行 `pnpm install`，再重载应用。插件自带 `cordis.patch.yml`，会自动插入。
+**本地开发**：在 profile 的 `package.json` 里加 `"dsh-visio": "link:/absolute/path/to/dsh-visio"`，执行 `pnpm install`，再重载应用。插件自带 `cordis.patch.yml`，会自动插入。
 
 需要 `PATH` 里有 Python 3.9+（或在插件配置里设 `pythonPath`，或设环境变量 `DSH_VISIO_PYTHON`）；若要用 PNG 导出 / 快照 / 模具预览，还需为该解释器安装 Pillow：`python -m pip install Pillow`。
 

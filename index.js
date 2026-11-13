@@ -433,7 +433,7 @@ const TOOL_PARAMETERS = {
       enum: ['open', 'text', 'get_shape', 'create', 'list', 'set_text', 'set_cell', 'set_prop',
         'add_shape', 'move', 'connect', 'probe', 'duplicate', 'route_style', 'bend',
         'clear_route', 'delete', 'validate', 'kinds', 'stencils',
-        'stencil_add', 'stencil_info', 'stencil_sheet', 'snapshot', 'capabilities',
+        'add_anchor', 'swimlane', 'move_endpoint', 'set_end_direction', 'stencil_add', 'stencil_info', 'stencil_sheet', 'snapshot', 'capabilities',
         'undo', 'redo', 'normalize', 'export'],
       description:
         'open reads a drawing (pages, page size, shapes with ids/text/bbox, and a text outline); '
@@ -477,13 +477,42 @@ const TOOL_PARAMETERS = {
     h: { type: 'number', description: 'Height in inches for add_shape.' },
     from: { type: 'string', description: 'Source shape id for connect.' },
     to: { type: 'string', description: 'Target shape id for connect.' },
+    from_port: { type: 'array', items: { type: 'number' }, description: 'connect / connect_styled: [x,y] in sheet inches that pins the START to an exact point (read a connection point with get_shape) instead of letting the router choose a side.' },
+    to_port: { type: 'array', items: { type: 'number' }, description: 'connect / connect_styled: [x,y] in sheet inches that pins the END to an exact point — use it so an arrow lands dead-centre on a border instead of diving inside the shape.' },
     label: { type: 'string', description: 'Optional text on the new connector.' },
+    side: { type: 'string', enum: ['top', 'bottom', 'left', 'right'], description: 'add_anchor: which side of the shape to hang the invisible anchor on (default top).' },
+    nodes: { type: 'array', items: { type: 'string' }, description: 'swimlane: shape ids that belong to the row. The band is sized from their bounding box, so it can never clip them.' },
+    owner: { type: 'string', description: 'swimlane: owner line next to the title, e.g. ｜市场 PM · 库制作人.' },
+    pad_x: { type: 'number', description: 'swimlane: horizontal padding around the nodes (default 0.45in).' },
+    pad_bottom: { type: 'number', description: 'swimlane: space under the nodes (default 0.30in).' },
+    head: { type: 'number', description: 'swimlane: header height above the nodes (default 0.42in).' },
+    orthogonal: { type: 'boolean', description: 'connect_styled: reject diagonal segments instead of drawing them (default true). Pass false only for a deliberate diagonal.' },
+    within: { type: 'array', items: { type: 'number' }, description: 'connect_styled: [x, y, w, h] in inches. Every waypoint must stay inside this box (e.g. a lane) or the call is rejected.' },
+    label_pos: { description: 'connect_styled: where the label goes — auto | above | below | left | right | [x, y] in inches. Non-auto modes nudge the label off any shape it would cover.' },
+    allow_off_midpoint: { type: 'boolean', description: 'connect_styled: allow an end to sit on a shape border away from the four side midpoints. Requires user_approved=true — ask the user first and quote their approval.' },
+    user_approved: { type: 'boolean', description: 'Set only after the user explicitly agreed to bypass the midpoint rule in this conversation.' },
+    strict: { type: 'boolean', description: 'audit_full: fail (ok=false) when any error or warning remains.' },
     dir: { type: 'string', description: 'Folder to list, or to create the new drawing in.' },
     title: { type: 'string', description: 'Document title for create; also drawn as the heading.' },
     width: { type: 'number', description: 'Page width in inches for create (default 11).' },
     height: { type: 'number', description: 'Page height in inches for create (default 8.5).' },
     format: { type: 'string', enum: ['svg', 'png'], description: 'Export format for export; default svg.' },
     out: { type: 'string', description: 'Output path for export; defaults next to the drawing.' },
+    geometry: { type: 'array', description: 'add_shape escape hatch: [[x,y],...] vertices in 0..1 fractions of w/h (or absolute inches >1.5). Overrides kind; use it to compose ANY silhouette (arrow heads, gates) when the 16 kinds and shape library are not enough.' },
+    font_color: { type: 'string', description: 'add_shape: #RRGGBB text colour. White on a dark fill gives the professional two-line look.' },
+    font_size: { type: 'number', description: 'add_shape: font size in points (default 11).' },
+    bold: { type: 'boolean', description: 'add_shape: bold first text line (default true).' },
+    line_pattern: { type: 'integer', description: 'add_shape: 1 solid, 2 dashed, 0 none.' },
+    line_width: { type: 'number', description: 'add_shape / connect: line width in inches. Use ~0.02 on a generated diagram so short arrows stay visible.' },
+    line_color: { type: 'string', description: 'connect: #RRGGBB line colour. Use different colours for normal flow / rework / cross-lane links.' },
+    points: { type: 'array', description: 'connect_styled / set_route: orthogonal waypoints [[x,y],...] in sheet inches for a deliberate cross-lane route.' },
+    text_bg: { type: 'boolean', description: 'add_shape: true = white text background, false = transparent. Use true on labels over lines; leave false on dark filled nodes.' },
+    angle: { type: 'number', description: 'add_shape/move: rotation in degrees, counter-clockwise.' },
+    shape_ids: { type: 'array', description: 'align: list of shape ids to snap together.' },
+    mode: { type: 'string', enum: ['edges', 'centres', 'ports'], description: 'align: which reference lines to snap to.' },
+    direction: { type: 'string', enum: ['top', 'bottom', 'left', 'right'], description: 'set_end_direction: which side of the shape the connector end should leave from.' },
+    shape: { type: 'object', description: 'shape_save: the shape spec to cache (must contain kind or geometry).' },
+    review: { type: 'boolean', description: 'snapshot: attach a structured overlap/out-of-page/text-overflow/connectivity report. Use review=true as the CHECK STAGE of every drawing task.' },
   },
   required: ['action'],
   additionalProperties: false,
@@ -601,6 +630,12 @@ function registerAgentTool(ctx, config) {
             w: args.w ?? 1.6,
             h: args.h ?? 0.8,
             text: args.text ?? '',
+            // Styling used to exist only on add_freeform, so every coloured node
+            // had to go through the escape hatch.  One shape API, not two.
+            fill: args.fill, line: args.line,
+            font_color: args.font_color, font_size: args.font_size, bold: args.bold,
+            line_pattern: args.line_pattern, line_width: args.line_width,
+            angle: args.angle, text_bg: args.text_bg,
           })
           return { text: `${state.notice}\n\n${formatState(state)}` }
         }
@@ -612,6 +647,8 @@ function registerAgentTool(ctx, config) {
             from: args.from,
             to: args.to,
             label: args.label ?? args.text ?? '',
+            from_port: args.from_port,
+            to_port: args.to_port,
           })
           return { text: `${state.notice}\n\n${formatState(state)}` }
         }
@@ -665,6 +702,71 @@ ${formatState(state)}`.trim() }
           const result = await runBridge(config, { action: 'stencil_list', file: args.file || args.path })
           const rows = (result.masters || []).map((m) => '#' + m.id + ' ' + m.name)
           return { text: rows.join(String.fromCharCode(10)) }
+        }
+        if (action === 'guide') {
+          const g = await runBridge(config, { action: 'guide', which: args.which })
+          return { text: JSON.stringify(g, null, 2) }
+        }
+        if (action === 'shape_list') {
+          const r = await runBridge(config, { action: 'shape_list' })
+          const rows = (r.shapes || []).map((x) => x.name + (x.builtin ? ' [builtin]' : ' [user]') + (x.label ? ' — ' + x.label : ''))
+          return { text: ['shape library: ' + r.count + ' shape(s)', 'built-in: ' + r.builtin, 'user: ' + r.user, ''].concat(rows).join(String.fromCharCode(10)) }
+        }
+        if (action === 'shape_save') {
+          const r = await runBridge(config, { action: 'shape_save', name: args.name, shape: args.shape })
+          return { text: 'cached shape "' + r.name + '" (rendered=' + r.rendered + ') at ' + r.path }
+        }
+        if (action === 'audit_full' || action === 'validate') {
+          const r = await runBridge(config, { action, path: args.path, page: args.page })
+          const rows = (r.issues || []).map((i) => [i.level.toUpperCase(), i.code, '#' + i.shape, i.message].join(' | '))
+          const head = ['errors ' + r.counts.error + ', warnings ' + r.counts.warn,
+            action === 'audit_full' ? 'checks: ' + (r.checks || []).join(', ') : '']
+          return { text: head.filter(Boolean).concat(rows).join(String.fromCharCode(10)) }
+        }
+        if (action === 'connect_styled') {
+          const r = await runBridge(config, { action: 'connect_styled', path: args.path, page: args.page,
+            from: args.from, to: args.to, label: args.label ?? args.text ?? '',
+            points: args.points, line_color: args.line_color, line_pattern: args.line_pattern,
+            line_width: args.line_width,
+            line_width: args.line_width, from_port: args.from_port, to_port: args.to_port,
+            orthogonal: args.orthogonal, within: args.within, label_pos: args.label_pos,
+            allow_off_midpoint: args.allow_off_midpoint, user_approved: args.user_approved })
+          return { text: 'connector #' + r.connector + ' (' + r.points + ' waypoints, ' + r.line_color + (r.dashed ? ', dashed' : '') + ')' }
+        }
+        if (action === 'add_anchor') {
+          const r = await runBridge(config, { action: 'add_anchor', path: args.path, page: args.page,
+            shape_id: args.shape_id, side: args.side, gap: args.gap })
+          return { text: 'anchor #' + r.anchor + ' on #' + r.shape + ' (' + r.side + ') at '
+            + r.x.toFixed(3) + ', ' + r.y.toFixed(3) }
+        }
+        if (action === 'swimlane') {
+          const r = await runBridge(config, { action: 'swimlane', path: args.path, page: args.page,
+            nodes: args.nodes, title: args.title, owner: args.owner, fill: args.fill, line: args.line,
+            pad_x: args.pad_x, pad_bottom: args.pad_bottom, head: args.head })
+          return { text: 'lane #' + r.lane + ' ' + JSON.stringify(r.bounds) + ' around '
+            + r.nodes.length + ' node(s), pushed behind them' }
+        }
+        if (action === 'move_endpoint') {
+          const state = await runBridge(config, { action: 'move_endpoint', path: args.path, page: args.page,
+            shape_id: args.shape_id, end: args.end, x: args.x, y: args.y })
+          return { text: `${state.notice}\n\n${formatState(state)}` }
+        }
+        if (action === 'set_end_direction') {
+          const state = await runBridge(config, { action: 'set_end_direction', path: args.path, page: args.page,
+            shape_id: args.shape_id, end: args.end, direction: args.direction })
+          return { text: `${state.notice}\n\n${formatState(state)}` }
+        }
+        if (action === 'align') {
+          const r = await runBridge(config, { action: 'align', path: args.path, page: args.page, shape_ids: args.shape_ids, mode: args.mode })
+          return { text: 'aligned ' + r.moved.length + ' shape(s) by ' + r.mode + ': ' + JSON.stringify(r.moved) }
+        }
+        if (action === 'add_freeform') {
+          const state = await runBridge(config, { action: 'add_shape', path: args.path, page: args.page,
+            x: args.x, y: args.y, w: args.w, h: args.h, text: args.text, kind: args.kind || 'rect',
+            geometry: args.geometry, fill: args.fill, line: args.line, font_color: args.font_color,
+            font_size: args.font_size, bold: args.bold, line_pattern: args.line_pattern,
+            line_width: args.line_width, angle: args.angle })
+          return { text: state.notice + String.fromCharCode(10) + String.fromCharCode(10) + formatState(state) }
         }
         if (action === 'stencil_add') {
           const state = await runBridge(config, {

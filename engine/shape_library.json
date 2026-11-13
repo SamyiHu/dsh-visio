@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "note": "Built-in default shape library for the visio agent tool. Read-only.",
+  "shapes": {
+    "gate": {
+      "kind": "diamond",
+      "fill": "#C55A1F",
+      "line": "#8A3D12",
+      "font_color": "#FFFFFF",
+      "font_size": 11,
+      "bold": true,
+      "label": "判定门：通过? / NG?"
+    },
+    "step": {
+      "kind": "rect",
+      "fill": "#17365D",
+      "line": "#17365D",
+      "font_color": "#FFFFFF",
+      "font_size": 11,
+      "bold": true,
+      "label": "标准流程节点（深蓝底白字，两行）"
+    },
+    "release": {
+      "kind": "roundrect",
+      "fill": "#2F6B4F",
+      "line": "#2F6B4F",
+      "font_color": "#FFFFFF",
+      "font_size": 11,
+      "bold": true,
+      "label": "冻结 / 放行节点"
+    },
+    "rework": {
+      "kind": "rect",
+      "fill": "#B03A2E",
+      "line": "#B03A2E",
+      "font_color": "#FFFFFF",
+      "font_size": 10,
+      "bold": true,
+      "label": "退回 / 返工"
+    },
+    "lane": {
+      "kind": "rect",
+      "fill": "#EAF1FB",
+      "line": "#D8E2EF",
+      "label": "泳道底（浅蓝）"
+    },
+    "lane_warm": {
+      "kind": "rect",
+      "fill": "#FBF1E3",
+      "line": "#EAE0CE",
+      "label": "泳道底（浅橙）"
+    },
+    "lane_green": {
+      "kind": "rect",
+      "fill": "#E7F3EC",
+      "line": "#D6E8DC",
+      "label": "泳道底（浅绿）"
+    },
+    "arrow_head": {
+      "geometry": [
+        [
+          0,
+          0.5
+        ],
+        [
+          1,
+          0
+        ],
+        [
+          1,
+          1
+        ],
+        [
+          0,
+          0.5
+        ]
+      ],
+      "fill": "#17365D",
+      "line": "#17365D",
+      "label": "箭头三角（像素堆叠式，可放在线的末端）"
+    },
+    "chevron_gate": {
+      "geometry": [
+        [
+          0.5,
+          0
+        ],
+        [
+          1,
+          0.5
+        ],
+        [
+          0.5,
+          1
+        ],
+        [
+          0,
+          0.5
+        ],
+        [
+          0.5,
+          0
+        ]
+      ],
+      "fill": "#C55A1F",
+      "line": "#8A3D12",
+      "font_color": "#FFFFFF",
+      "label": "判定菱形（自由多边形）"
+    }
+  }
+}

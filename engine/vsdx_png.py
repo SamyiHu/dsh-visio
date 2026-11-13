@@ -176,6 +176,28 @@ def render_png(path: str, page: int = 1, out_path: str = None, dpi: int = 96,
             f = _font(max(9, int(8 * scale)))
             draw.text((x0 + 2, y0 - int(10 * scale)), "#%s" % s["id"], font=f, fill="#C0392B")
 
+    def _dashed(poly, color, width, dash, gap):
+        """Draw a polyline as dashes - PIL's draw.line has no dash support."""
+        import math
+        on, rem = True, float(dash)
+        for i in range(len(poly) - 1):
+            (x1, y1), (x2, y2) = poly[i], poly[i + 1]
+            seg = math.hypot(x2 - x1, y2 - y1)
+            if seg <= 0:
+                continue
+            ux, uy = (x2 - x1) / seg, (y2 - y1) / seg
+            t = 0.0
+            while t < seg:
+                step = min(rem, seg - t)
+                if on:
+                    draw.line([(x1 + ux * t, y1 + uy * t),
+                               (x1 + ux * (t + step), y1 + uy * (t + step))],
+                              fill=color, width=width)
+                t += step
+                rem -= step
+                if rem <= 1e-9:
+                    on = not on
+                    rem = float(dash if on else gap)
     for s in shapes:
         if not s["connector"]:
             continue
@@ -194,7 +216,10 @@ def render_png(path: str, page: int = 1, out_path: str = None, dpi: int = 96,
             poly = [px(bx, by), px(ex, ey)]
         line_color = st.get("line") or "#404040"
         conn_w = max(1, int(round((st.get("weight_in") or 0.0104) * k)))
-        draw.line(poly, fill=line_color, width=conn_w, joint="curve")
+        if str(st.get('pattern') or '1') == '2':
+            _dashed(poly, line_color, conn_w, 0.11 * k, 0.07 * k)
+        else:
+            draw.line(poly, fill=line_color, width=conn_w, joint="curve")
         # arrow head at the end of the connector
         if len(poly) >= 2 and str(st.get("end_arrow") or "0") not in ("0", "None"):
             import math

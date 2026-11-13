@@ -1,4 +1,4 @@
 - insert:
     - id: local-visio
-      name: '@local/dsh-visio'
+      name: 'dsh-visio'
       config: {}

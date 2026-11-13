@@ -195,16 +195,19 @@ assert.equal(findAll(fabOnly, (node) => node.props?.className === 'dshv-fab').le
 
 const canvasWrap = findAll(loadedTree, (n) => String(n.props?.className || '').includes('dshv-canvasWrap'))[0]
 assert.ok(canvasWrap, 'canvas wrap missing')
-// One continuous grid layer spans the scrollable workspace, behind a
-// transparent page.  It is in-phase with the shapes at every zoom level.
+// The workspace carries one continuous grid; the page is a framed window onto
+// the same net, so the sheet reads as the export area instead of a lone strip.
 const gridEl = findAll(loadedTree, (n) => String(n.props?.className || '').includes('dshv-gridLayer'))[0]
-assert.ok(gridEl, 'grid layer missing')
+assert.ok(gridEl, 'workspace grid layer missing')
 assert.match(String(gridEl.props.style.backgroundImage), /linear-gradient/, 'grid gradient missing')
 assert.match(String(gridEl.props.style.backgroundSize), /\d+(\.\d+)?px \d+(\.\d+)?px/, 'grid size missing')
 const pageEl = findAll(loadedTree, (n) => String(n.props?.className || '').includes('dshv-page'))[0]
 assert.ok(pageEl, 'page element missing')
-assert.equal(String(pageEl.props.style.backgroundColor), 'transparent', 'page must be transparent so the grid shows through')
-assert.ok(String(pageEl.props.style.boxShadow).includes('1px'), 'page size border missing')
+assert.equal(String(pageEl.props.style.backgroundColor), '#FFFFFF',
+  'page must be opaque white so shape fills hide the outside grid')
+assert.ok(String(pageEl.props.style.backgroundImage || '').includes('gradient'),
+  'the page must carry its own grid background, otherwise the outside grid paints over shapes')
+assert.match(String(pageEl.props.style.boxShadow), /1(\.5)?px/, 'page frame border missing')
 
 
 console.log('ok — zoom toolbar renders')

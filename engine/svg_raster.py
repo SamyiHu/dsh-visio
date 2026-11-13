@@ -34,6 +34,28 @@ def _font(px):
     return ImageFont.load_default()
 
 
+def _draw_dashed(draw, pts, color, width, on, off):
+    """Polyline as dashes; PIL's draw.line cannot do stroke-dasharray."""
+    want, cur = True, on
+    for i in range(len(pts) - 1):
+        (x1, y1), (x2, y2) = pts[i], pts[i + 1]
+        seg = math.hypot(x2 - x1, y2 - y1)
+        if seg <= 0:
+            continue
+        ux, uy = (x2 - x1) / seg, (y2 - y1) / seg
+        t = 0.0
+        while t < seg - 1e-9:
+            step = min(cur, seg - t)
+            if want:
+                draw.line([(x1 + ux * t, y1 + uy * t),
+                           (x1 + ux * (t + step), y1 + uy * (t + step))],
+                          fill=color, width=width)
+            t += step
+            cur -= step
+            if cur <= 1e-9:
+                want = not want
+                cur = on if want else off
+
 def _attr(rest, name, default=None):
     found = re.search(r'%s="([^"]+)"' % name, rest)
     return found.group(1) if found else default
@@ -81,7 +103,18 @@ def rasterize(svg: str, scale: float = 1.0, background: str = "#FFFFFF"):
                 wpx = max(1, int(round(float(width_attr))))
             else:
                 wpx = max(1, int(round(float(width_attr) * scale)))
-            draw.line(pts, fill=stroke, width=wpx, joint="curve")
+            dash_attr = _attr(rest, "stroke-dasharray", "")
+            if dash_attr:
+                # PIL has no dash support: walk each segment and paint the 'on'
+                # runs.  Without this every dashed connector rasterised solid.
+                _vals = [float(x) for x in NUM.findall(dash_attr)]
+                _on = _vals[0] * scale if _vals else 0.0
+                _off = (_vals[1] * scale if len(_vals) > 1 else _on)
+                if _on <= 0:
+                    _on, _off = 4.0, 3.0
+                _draw_dashed(draw, pts, stroke, wpx, _on, _off)
+            else:
+                draw.line(pts, fill=stroke, width=wpx, joint="curve")
         if "marker-end" in rest:
             (ax, ay), (bx, by) = pts[-2], pts[-1]
             angle = math.atan2(by - ay, bx - ax)

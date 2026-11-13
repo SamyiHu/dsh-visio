@@ -1,16 +1,16 @@
 window.__ModuleLoader__.load({
-  id: '@local/dsh-visio',
+  id: 'dsh-visio',
   factory(require) {
     const React = require('react')
     const h = React.createElement
     const { useCallback, useEffect, useMemo, useRef, useState } = React
 
-    const NS = '@local/dsh-visio'
+    const NS = 'dsh-visio'
     const ROUTE = 'dsh-visio'
     const PANEL_ID = 'dsh-visio'
     const POLL_MS = 2500
     // Bumped with every release: the footer shows it, so a stale bundle is obvious.
-    const CLIENT_BUILD = '1.23.0'
+    const CLIENT_BUILD = '1.24.0'
 
     /* ------------------------------------------------------------- locale */
 
@@ -367,6 +367,9 @@ window.__ModuleLoader__.load({
    we emit, which puts a cell boundary exactly on the page's SVG origin. */
 .dshv-gridLayer{position:absolute;pointer-events:none;z-index:0}
 .dshv-page{position:relative;z-index:1}
+/* The svg sits above the grid: opaque shape fills hide the grid, empty paper
+   shows it through.  Without this the grid painted OVER every node. */
+.dshv-svgHost{position:relative;z-index:2}
 .dshv-page{margin:0 auto;max-width:none;box-shadow:0 8px 26px rgba(0,0,0,.16);border-radius:2px;background:transparent}
 
 /* ---- header */
@@ -416,7 +419,7 @@ window.__ModuleLoader__.load({
 `
 
     const CSS = `
-.dshv-root{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);
+.dshv-root{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);outline:none;
   font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;font-size:13px;line-height:1.45}
 .dshv-head{display:flex;align-items:center;gap:10px;padding:12px 16px 10px;border-bottom:1px solid var(--dsw-alias-border-l1);flex:0 0 auto}
 .dshv-headText{min-width:0;flex:1}
@@ -455,6 +458,7 @@ window.__ModuleLoader__.load({
 textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px;padding:7px 8px;resize:vertical;line-height:1.5}
 .dshv-check{display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:6px;cursor:pointer}
 .dshv-check input{accent-color:var(--dsw-alias-brand-primary)}
+.dshv-miniLabel{font-size:11px;color:var(--dsw-alias-label-secondary);min-width:56px}
 .dshv-routeRow{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:4px}
 .dshv-warn{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px;color:var(--dsw-alias-state-error)}
 .dshv-row{display:flex;gap:6px;align-items:center}
@@ -880,6 +884,7 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         if (!options.quiet) setBusy(true)
         setError('')
         try {
+        try { window.__lastPayload = payload } catch (e) {}
           const state = await postJson(`${ROUTE}/op`, payload)
           if (seq !== seqRef.current) return null
           if (options.light && state && state.svg === undefined) {
@@ -910,6 +915,13 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         const current = docRef.current
         if (!current) return
         runOp({ action, path: current.path, page: current.page })
+      }, [runOp])
+
+      const endDirection = useCallback((end, direction) => {
+        const current = docRef.current
+        if (!current || !selectedRef.current) return
+        runOp({ action: 'set_end_direction', path: current.path, page: current.page,
+          shape_id: selectedRef.current, end, direction })
       }, [runOp])
 
 
@@ -1164,38 +1176,50 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
       useEffect(() => {
         const onKey = (event) => {
           const root = rootRef.current
+          if (!root) return
+          const path = typeof event.composedPath === 'function' ? event.composedPath() : []
           const active = document.activeElement
-          if (root && event.target && !root.contains(event.target) && !root.contains(active)) return
+          // The DSH shell keeps focus on its own body, and a panel wrapped in a
+          // shadow root retargets event.target to the host: both made the old
+          // "is the event inside the panel" test fail, so shortcuts died in the
+          // app while still working in the standalone harness.  composedPath()
+          // plus the focused-root check covers both cases.
+          const inside = path.includes(root) || root.contains(event.target)
+            || root === active || (active && root.contains(active))
+          if (!inside) return
           const tag = active ? active.tagName : ''
           const typing = tag === 'INPUT' || tag === 'TEXTAREA' || (active && active.isContentEditable)
           if (typing) return
           const key = String(event.key || '').toLowerCase()
+          const take = () => { event.preventDefault(); event.stopPropagation() }
           if ((event.ctrlKey || event.metaKey) && (key === 'z' || key === 'y')) {
-            event.preventDefault()
+            take()
             // Ctrl+Z undo, Ctrl+Shift+Z / Ctrl+Y redo (both conventions).
             undoTo(key === 'y' || event.shiftKey ? 'redo' : 'undo')
             return
           }
           if ((event.ctrlKey || event.metaKey) && key === 'd') {
             // duplicate the selection: a common companion to Del
-            event.preventDefault()
+            take()
             if (selectedRef.current) setNotice(t('selectShape'))
             return
           }
           if (event.ctrlKey || event.metaKey || event.altKey) return
           if (key === 'delete' || key === 'backspace') {
             if (!selectedRef.current) return
-            event.preventDefault()
+            take()
             removeShape({ confirm: false })
             return
           }
           if (key === 'escape') {
-            event.preventDefault()
+            take()
             setSelected(null)
           }
         }
-        window.addEventListener('keydown', onKey)
-        return () => window.removeEventListener('keydown', onKey)
+        // Capture phase: DSH installs its own document-level shortcuts, and a
+        // bubbling listener loses Ctrl+Z to them before the panel sees it.
+        document.addEventListener('keydown', onKey, true)
+        return () => document.removeEventListener('keydown', onKey, true)
       }, [undoTo, removeShape])
 
       const useGuide = useCallback(async (direction) => {
@@ -1281,6 +1305,10 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
       const dragRef = useRef(null)
 
       const SNAP = 0.35           // inches; about one grid cell at 100% zoom
+      // A connector run needs a much finer magnet than a whole shape: 0.35in
+      // covered a whole grid cell, so a small drag jumped between two nearby
+      // alignment lines instead of following the pointer.
+      const SNAP_FINE = 0.05
 
       // Four connection points of a box, in sheet coordinates.  The engine ships the
       // real Connection rows when a shape has them; the side midpoints are the
@@ -1465,8 +1493,10 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         }
         const label = drag.isConn && drag.textNode
         if (label) {
+          // dx/dy are screen pixels; svg user space is inches.  Divide by the
+          // on-screen scale so the live preview matches what move_label commits.
           drag.textNode.setAttribute('transform',
-            `translate(${drag.dx.toFixed(4)} ${drag.dy.toFixed(4)})`)
+            `translate(${(drag.dx / drag.scale).toFixed(4)} ${(drag.dy / drag.scale).toFixed(4)})`)
         } else {
           drag.node.setAttribute('transform',
             `translate(${(drag.base.x + drag.dx).toFixed(4)} ${(drag.base.y + drag.dy).toFixed(4)})`)
@@ -1511,8 +1541,10 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         if (drag.isConn && drag.textNode) {
           runOp({
             action: 'move_label', path: current.path, page: current.page, shape_id: drag.id,
-            dx: Math.round(drag.dx * 1000) / 1000, dy: Math.round(-drag.dy * 1000) / 1000,
-          }, { quiet: true }).then((saved) => {
+            // drag.dy is screen pixels (down positive); TxtPinY is drawing inches
+            // (up positive).  Convert by the on-screen scale and flip the sign here.
+            dx: Math.round(drag.dx * 1000) / 1000, dy: Math.round((-drag.dy / drag.scale) * 1000) / 1000,
+          }).then((saved) => {
             if (drag.textNode) drag.textNode.removeAttribute('transform')
             return saved
           })
@@ -2071,29 +2103,32 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
             const wx = world.x
             const wy = world.y
             const near = nearestPort(wx, wy)
+            // 0.25in magnet: close enough to a port and the end snaps there,
+            // otherwise the end follows the pointer exactly.  Alt forces a free
+            // drop even when a port is under the cursor.
+            const magnet = near && Math.sqrt(near.d) <= 0.25 && !e.altKey
             const g = ghost('dshv-drop')
             const circle = g.querySelector('circle')
             const line = g.querySelector('line')
-            if (near) {
-              circle.setAttribute('cx', toViewX(near.port[0]))
-              circle.setAttribute('cy', toViewY(near.port[1]))
-              line.setAttribute('x1', toViewX(near.port[0]))
-              line.setAttribute('y1', toViewY(near.port[1]))
-              line.setAttribute('x2', toViewX(wx))
-              line.setAttribute('y2', toViewY(wy))
-              g.style.display = ''
-            } else {
-              g.style.display = 'none'
-            }
+            const px = magnet ? near.port[0] : wx
+            const py = magnet ? near.port[1] : wy
+            circle.setAttribute('cx', toViewX(px))
+            circle.setAttribute('cy', toViewY(py))
+            line.setAttribute('x1', toViewX(px))
+            line.setAttribute('y1', toViewY(py))
+            line.setAttribute('x2', toViewX(wx))
+            line.setAttribute('y2', toViewY(wy))
+            g.style.display = ''
+            circle.setAttribute('fill', magnet ? '#2FBF71' : '#2F6FBF')
             const tip = tipRef.current
             if (tip && tip.parentElement) {
               const host = tip.parentElement.getBoundingClientRect()
               tip.style.display = 'block'
               tip.style.left = `${e.clientX - host.left + 14}px`
               tip.style.top = `${e.clientY - host.top - 30}px`
-              tip.textContent = near
+              tip.textContent = magnet
                 ? `${which === 'start' ? '新起点' : '新终点'} → #${near.id} (${near.port[0].toFixed(2)}, ${near.port[1].toFixed(2)})`
-                : `${which === 'start' ? '新起点' : '新终点'} 未对准任何形状`
+                : `${which === 'start' ? '新起点' : '新终点'} ${wx.toFixed(2)}, ${wy.toFixed(2)}${near ? '  (Alt 自由放置)' : ''}`
             }
           }
 
@@ -2106,12 +2141,16 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
             if (Math.abs(e.clientX - start.x) + Math.abs(e.clientY - start.y) < 3) return
             const world = toSheet(e.clientX, e.clientY)
             const near = nearestPort(world.x, world.y)
-            if (!near) {
-              setError(t('needTarget'))
+            const snapped = near && Math.sqrt(near.d) <= 0.25 && !e.altKey
+            if (snapped) {
+              runOp({ action: 'reglue', path: current.path, page: current.page,
+                shape_id: shapeId, end: which, to: near.id, x: near.port[0], y: near.port[1] })
               return
             }
-            runOp({ action: 'reglue', path: current.path, page: current.page,
-              shape_id: shapeId, end: which, to: near.id, x: near.port[0], y: near.port[1] })
+            // No port within 0.25in: drop the end exactly where the pointer is and
+            // detach its glue, instead of refusing the drag with 未对准任何形状.
+            runOp({ action: 'move_endpoint', path: current.path, page: current.page,
+              shape_id: shapeId, end: which, x: world.x, y: world.y })
           }
           window.addEventListener('pointermove', move)
           window.addEventListener('pointerup', up)
@@ -2207,13 +2246,24 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           // changes), vertical runs slide sideways (their x changes).
           const baseAt = vertical ? (seg0 ? seg0.a[0] : 0) : (seg0 ? seg0.a[1] : 0)
           let snapped = null
-          const snapRun = (raw) => {
+          // Magnetic, not sticky: a run only jumps when a reference line is within
+          // SNAP_FINE.  The old 0.35in magnet covered a whole grid cell, so a small
+          // drag landed on one of two nearby alignments and felt like two coarse
+          // positions instead of a continuous move.  Shift disables the magnet.
+          const snapRun = (raw, magnet = true) => {
             snapped = null
+            if (!magnet) return raw
             const want = baseAt + raw
-            const hit = nearest(want, vertical ? cands.xs : cands.ys)
-            if (hit === null) return raw
-            snapped = hit
-            return hit - baseAt
+            const list = vertical ? cands.xs : cands.ys
+            let best = null
+            let dist = SNAP_FINE
+            for (const v of list) {
+              const d = Math.abs(v - want)
+              if (d <= dist) { best = v; dist = d }
+            }
+            if (best === null) return raw
+            snapped = best
+            return best - baseAt
           }
           const drawSnap = (value) => {
             hideGuide(svgEl, 'dshv-conn-snap')
@@ -2228,8 +2278,9 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
             const dx = (e.clientX - start.x) / scale
             const dy = (e.clientY - start.y) / scale
             const raw = vertical ? dx : -dy
-            const value = e.altKey ? raw : snapRun(raw)
-            drawSnap(e.altKey ? null : snapped)
+            const magnet = !e.shiftKey
+            const value = snapRun(raw, magnet)
+            drawSnap(magnet ? snapped : null)
             const tip = tipRef.current
             if (!tip || !tip.parentElement) return
             const host = tip.parentElement.getBoundingClientRect()
@@ -2237,7 +2288,7 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
             tip.style.left = `${e.clientX - host.left + 14}px`
             tip.style.top = `${e.clientY - host.top - 30}px`
             const label = axis === 'y' ? `竖直偏移 ${(-dy).toFixed(3)} in` : `水平偏移 ${dx.toFixed(3)} in`
-            tip.textContent = (e.altKey ? label : (snapped !== null ? `${label}   [对齐]` : label))
+            tip.textContent = magnet ? (snapped !== null ? `${label}   [对齐]` : label) : `${label}   [精细]`
           }
           const up = (e) => {
             window.removeEventListener('pointermove', move)
@@ -2250,8 +2301,8 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
             // vertical runs slide sideways.  Using the raw mouse axis made a horizontal
             // line ignore a sideways drag, which felt like "nothing moves".
             const raw = vertical ? dx : -dy
-            const delta = e.altKey ? raw : snapRun(raw)
-            if (Math.abs(delta) < 0.02) return
+            const delta = snapRun(raw, !e.shiftKey)
+            if (Math.abs(delta) < 0.004) return
             runOp({ action: 'move_segment', path: current.path, page: current.page,
               shape_id: shapeId, index: segIndex, delta })
           }
@@ -2349,7 +2400,12 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
       const pythonBroken = config && config.pythonOk === false
       const nothingOpen = !doc
 
-      return h('div', { className: 'dshv-root', ref: rootRef },
+      return h('div', { className: 'dshv-root', ref: rootRef, tabIndex: 0,
+          // Keyboard shortcuts need a focus owner: clicking any control in the
+          // panel focuses the root, so keydown targets the panel instead of the
+          // host shell.  tabIndex also makes it reachable with Tab.
+          onPointerDownCapture: () => { try { rootRef.current && rootRef.current.focus({ preventScroll: true }) } catch (e) { /* ignore */ } },
+        },
         h('style', null, CSS),
         h('style', null, CSS_POLISH),
         h('style', null, CSS_FLOAT),
@@ -2515,34 +2571,34 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
                   h('div', {
                     className: `dshv-canvasWrap${tool === 'hand' ? ' dshv-hand' : ''}`,
                     ref: canvasBox,
-                    style: { backgroundColor: '#F7F8FA' },
+                    style: { backgroundColor: '#F3F5F8' },
                   },
                     h('div', { className: 'dshv-canvasInner' },
                       h('div', { ref: pageRef, className: 'dshv-page', style: {
                         aspectRatio: `${vb.w} / ${vb.h}`,
                         width: `${pageBox}px`,
-                        // The page is transparent: only a border marks the paper
-                        // size.  One continuous grid layer (below) shows through it,
-                        // so the grid measures shapes both inside and outside the page.
-                        backgroundColor: 'transparent',
-                        boxShadow: '0 0 0 1px rgba(90,105,130,0.55), 0 8px 26px rgba(0,0,0,0.16)',
+                        // The page carries its OWN grid as a CSS background so the
+                        // SVG (opaque shape fills) is always painted on top of it.
+                        // A separate grid layer only covers the area OUTSIDE the page;
+                        // putting it above the svg made grid lines show through nodes.
+                        backgroundColor: '#FFFFFF',
+                        backgroundImage: showGrid ? gridImage : 'none',
+                        backgroundSize: gridSize,
+                        // The page box starts at the SVG's (vb.x, vb.y), not at the
+                        // drawing origin; without this shift the page net sits 0.25in
+                        // off the workspace net at the page border.
+                        backgroundPosition: (-vb.x * pxPerIn).toFixed(2) + 'px ' + (-vb.y * pxPerIn).toFixed(2) + 'px',
+                        boxShadow: '0 0 0 1.5px rgba(53,86,148,0.75), 0 10px 30px rgba(0,0,0,0.18)',
                         flex: '0 0 auto',
                         maxWidth: 'none',
                       } },
+
                       showGrid ? h('div', {
                         className: 'dshv-gridLayer',
                         style: {
-                          // Anchored at the page's SVG origin and extended far in
-                          // every direction, so it is ONE continuous net over the
-                          // whole scrollable workspace with no seam at the page edge.
-                          // It lives inside the scrolling content, not on the
-                          // scroll container, so panning never shifts it against
-                          // the shapes.  5000px is the background offset that puts
-                          // a grid line exactly on the page's (0,0).
-                          // The SVG's (0,0) is NOT the page div's top-left: the
-                          // engine pads the viewBox by vb.x/vb.y (usually -0.25in).
-                          // Offset the grid by that padding in pixels so a cell line
-                          // lands exactly on the drawing origin on both axes.
+                          // Anchored INSIDE the page box, so the page's padding is part of
+                          // the same coordinate system: the net outside the paper is the
+                          // continuation of the net on it, to the pixel.
                           left: `calc(${-gridPad}px + ${(-vb.x * pxPerIn).toFixed(4)}px)`,
                           top: `calc(${-gridPad}px + ${(-vb.y * pxPerIn).toFixed(4)}px)`,
                           width: `calc(100% + ${gridPad * 2}px)`,
@@ -2598,7 +2654,7 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
                   onSetProp: setProp,
                   onDelete: removeShape,
                   onConnect: connectTo,
-                  onRouteStyle: routeStyle,
+              onRouteStyle: routeStyle, onEndDirection: endDirection,
                   onDeselect: () => setSelected(null),
                 })
               : h('div', { className: 'dshv-empty', style: { padding: 24 } },
@@ -2638,7 +2694,7 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
 
     /* ------------------------------------------------------------ inspector */
 
-    function ShapeInspector({ t, doc, shape, detail, onCommitText, onCommitCell, onCommitMove, onCommitLine, onSetProp, onDelete, onConnect, onRouteStyle, onDeselect }) {
+    function ShapeInspector({ t, doc, shape, detail, onCommitText, onCommitCell, onCommitMove, onCommitLine, onSetProp, onDelete, onConnect, onRouteStyle, onEndDirection, onDeselect }) {
       const [text, setText] = useState(detail.text || '')
       const [propName, setPropName] = useState('')
       const [propValue, setPropValue] = useState('')
@@ -2709,6 +2765,16 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
               h('div', { className: 'dshv-sectionTitle' }, t('route')),
               h('div', { className: 'dshv-hint' }, t('routeHint')),
               h('div', { className: 'dshv-routeRow' },
+                h('span', { className: 'dshv-miniLabel' }, '起点方向'),
+                ...[['top', '↑'], ['bottom', '↓'], ['left', '←'], ['right', '→']].map(([dir, glyph]) =>
+                  h(Btn, { key: 'start-' + dir, small: true, variant: 'ghost',
+                    title: '从 ' + dir + ' 侧引出', onClick: () => onEndDirection('start', dir) }, glyph))),
+              h('div', { className: 'dshv-routeRow' },
+                h('span', { className: 'dshv-miniLabel' }, '终点方向'),
+                ...[['top', '↑'], ['bottom', '↓'], ['left', '←'], ['right', '→']].map(([dir, glyph]) =>
+                  h(Btn, { key: 'end-' + dir, small: true, variant: 'ghost',
+                    title: '从 ' + dir + ' 侧进入', onClick: () => onEndDirection('end', dir) }, glyph))),
+              h('div', { className: 'dshv-routeRow' },
                 h(Btn, { small: true, variant: 'ghost', onClick: () => onRouteStyle('auto') }, t('route_auto'))))
           : null,
 
@@ -2762,6 +2828,12 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
               },
               onKeyDown: (e) => { if (e.key === 'Enter') e.currentTarget.blur() },
             }))),
+            h('div', { className: 'dshv-routeRow', style: { marginTop: 6 } },
+              h('span', { className: 'dshv-miniLabel' }, '线型'),
+              ...[['实线', 1], ['虚线', 2], ['点线', 3], ['点划线', 4], ['无', 0]].map(([label, value]) =>
+                h(Btn, { key: 'lp-' + value, small: true,
+                  variant: Number((detail.cells && detail.cells.LinePattern) || 1) === value ? 'primary' : 'ghost',
+                  onClick: () => onCommitCell({ LinePattern: value }) }, label))),
 
         h('div', { className: 'dshv-section' },
           h('div', { className: 'dshv-sectionTitle' }, t('shapeData')),
