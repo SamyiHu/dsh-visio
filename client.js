@@ -751,21 +751,17 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         + '<circle cx="' + midX + '" cy="' + (top - 0.62) + '" r="0.085" fill="#FFFFFF"'
         + ' stroke="#2F6FBF" stroke-width="1.5" vector-effect="non-scaling-stroke"/></g>',
       ].join('')
-      // The group may carry a transform (rotation), so match the opening tag
-      // instead of the exact string '<g data-shape-id="N">'.
-      const marker = '<g data-shape-id="' + shape.id + '"'
-      const at = svg.indexOf(marker)
-      if (at < 0) return svg
-      const end = svg.indexOf('>', at)
-      if (end < 0) return svg
-      // Append at the END of the group: the shape's own path is painted first, so
-      // handles inserted at the start ended up underneath it and never got the
-      // pointerdown (dragging a corner moved the whole shape instead).
-      const close = svg.indexOf('</g>', end)
-      if (close < 0) return svg
-      // guides first, handles last: the rotate knob sits right where the top guide
-      // arrow used to be, and the arrow was stealing its clicks.
-      return svg.slice(0, close) + rect + guides + handles + svg.slice(close)
+      // Draw the overlay OUTSIDE the shape's own group and apply the rotation
+      // ourselves.  Appending it inside the group looked right only while the
+      // group actually carried the transform: for a rotated ellipse the dashed
+      // box stayed on the unrotated bbox and the handles sat off the shape.
+      const ang = Number(shape.angle) || 0
+      const gcx = box.x + box.w / 2
+      const gcy = pageHeight - (box.y + box.h / 2)
+      const open = ang ? '<g transform="rotate(' + (-ang).toFixed(4) + ' ' + gcx.toFixed(4) + ' ' + gcy.toFixed(4) + ')">' : '<g>'
+      const cut = svg.lastIndexOf('</svg>')
+      if (cut < 0) return svg
+      return svg.slice(0, cut) + open + rect + guides + handles + '</g>' + svg.slice(cut)
     }
 
     const LAST_DOC = 'dshv:lastDoc'

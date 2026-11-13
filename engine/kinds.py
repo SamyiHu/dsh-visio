@@ -54,8 +54,11 @@ def rows_for(kind: str, w: float, h: float):
     rows = []
     for item in spec:
         if item[0] == "Ellipse":
-            rows.append(("Ellipse", {"X": w / 2.0, "Y": h / 2.0, "A": h / 2.0,
-                                     "B": w / 2.0, "C": h / 2.0, "D": w / 2.0}))
+            # A is the horizontal radius, B the vertical one: the previous pair was
+            # swapped, so a 2.4 x 1.2 ellipse was drawn 1.2 x 2.4 and its dashed
+            # selection box no longer matched the outline.
+            rows.append(("Ellipse", {"X": w / 2.0, "Y": h / 2.0, "A": w / 2.0,
+                                     "B": h / 2.0, "C": w / 2.0, "D": h / 2.0}))
             continue
         kind_row, x, y = item
         rows.append((kind_row, {"X": x, "Y": y}))

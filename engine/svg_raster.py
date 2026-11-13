@@ -15,6 +15,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 TEXT_RE = re.compile(r'<text x="([-\d.]+)" y="([-\d.]+)" font-size="([\d.]+)" fill="([^"]+)"([^>]*)>([^<]*)</text>')
 PATH_RE = re.compile(r'<path d="([^"]+)"([^/]*)/>')
+ELLIPSE_RE = re.compile(r'<ellipse cx="([-\d.]+)" cy="([-\d.]+)" rx="([-\d.]+)" ry="([-\d.]+)"([^/]*)/>')
 RECT_RE = re.compile(r'<rect x="([-\d.]+)" y="([-\d.]+)" width="([-\d.]+)" height="([-\d.]+)"([^/]*)/>')
 NUM = re.compile(r"-?\d+\.?\d*")
 
@@ -61,6 +62,7 @@ def _attr(rest, name, default=None):
     return found.group(1) if found else default
 
 
+
 def rasterize(svg: str, scale: float = 1.0, background: str = "#FFFFFF"):
     view = re.search(r'viewBox="([-\d.]+) ([-\d.]+) ([\d.]+) ([\d.]+)"', svg)
     if not view:
@@ -83,6 +85,18 @@ def rasterize(svg: str, scale: float = 1.0, background: str = "#FFFFFF"):
             draw.rectangle(box, fill=fill)
         if stroke not in ("none", "transparent"):
             draw.rectangle(box, outline=stroke, width=max(1, int(round(float(_attr(rest, "stroke-width", 0.01)) * scale))))
+
+    for m in ELLIPSE_RE.finditer(body):
+        cx, cy, rx, ry, rest = m.groups()
+        fill = _attr(rest, "fill", "none")
+        stroke = _attr(rest, "stroke", "none")
+        box = [tx(float(cx) - float(rx)), ty(float(cy) - float(ry)),
+               tx(float(cx) + float(rx)), ty(float(cy) + float(ry))]
+        if fill not in ("none", "transparent"):
+            draw.ellipse(box, fill=fill)
+        if stroke not in ("none", "transparent"):
+            draw.ellipse(box, outline=stroke,
+                         width=max(1, int(round(float(_attr(rest, "stroke-width", 0.01)) * scale))))
 
     for m in PATH_RE.finditer(body):
         d, rest = m.groups()
