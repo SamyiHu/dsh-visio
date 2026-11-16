@@ -59,10 +59,20 @@ Select a connector to change its end directions and line style:
 dsh plugin --profile desktop add dsh-visio
 ```
 
-> No npm release yet? Install straight from GitHub:
-> ```bash
-> dsh plugin --profile desktop add github:SamyiHu/dsh-visio
-> ```
+npm package: <https://www.npmjs.com/package/dsh-visio> (`latest` = 1.24.1).
+
+To see it under **Plugins → Discover**, add the community index source:
+
+```
+Settings → Plugins → Discover → Index sources
+https://cdn.jsdelivr.net/npm/dsh-plugin-catalog/index.json
+```
+
+GitHub source still works as a fallback:
+
+```bash
+dsh plugin --profile desktop add github:SamyiHu/dsh-visio
+```
 
 **Local development:** add `"dsh-visio": "link:/absolute/path/to/dsh-visio"` to the profile
 `package.json`, run `pnpm install`, then reload the app. The bundle patch
