@@ -1,6 +1,6 @@
 {
   "name": "dsh-visio",
-  "version": "1.24.0",
+  "version": "1.24.1",
   "type": "module",
   "description": "Visio (.vsdx) viewer/editor for the DeepSeek Harness Web UI: live SVG preview, shape editing, connectors and a visio agent tool.",
   "exports": {

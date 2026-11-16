@@ -4,8 +4,8 @@
 
 ```bash
 git add -A
-git commit -m "Release 1.24.0"
-git tag v1.24.0
+git commit -m "Release 1.24.1"
+git tag v1.24.1
 git push && git push --tags
 ```
 

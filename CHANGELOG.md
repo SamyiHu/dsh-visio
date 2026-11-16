@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.24.1 (2026-11-16)
+
+- **Ellipse geometry fixed**: the Ellipse row wrote A/B radii swapped, so a
+  2.4 x 1.2 ellipse rendered 1.2 x 2.4 while its selection box stayed 2.4 x 1.2.
+- **Selection overlay follows rotation**: the dashed box and the eight handles are
+  drawn in page space and rotated around the shape centre.
+- **PNG export draws ellipses** (the rasteriser only handled rect/path/text).
+- **Stencil import repaired**: `stencils` called a non-existent action,
+  `stencil_add` ignored the `stencil` argument, masters could only be picked by
+  numeric id, and the second import in one session failed on a stale relationship
+  cache. All four fixed; `stencil_sheet` verified.
+- **Grid** is a faint reference again (0.07 / 0.15 alpha, fine cells hidden when
+  denser than 12px) instead of competing with connector lines.
+- READMEs now carry panel, shape-editor and connector-editor screenshots plus the
+  two showcase drawings.
+
 ## 1.24.0 (2026-11-13) — AI drawing parity + editor guidance
 
 - **Escape hatch restored**: `add_shape` accepts an explicit `geometry` vertex list

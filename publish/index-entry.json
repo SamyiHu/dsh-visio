@@ -33,8 +33,8 @@
       },
       "versions": [
         {
-          "version": "1.24.0",
-          "publishTimestamp": 1794475091,
+          "version": "1.24.1",
+          "publishTimestamp": 1794791666,
           "source": {
             "type": "git",
             "url": "https://github.com/SamyiHu/dsh-visio",
