@@ -3018,12 +3018,23 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
       const { t } = props
       const [open, setOpen] = useState(false)
       // the launcher itself is draggable; a drag must not toggle the window
+      // The launcher used to fall back to the CSS bottom-right corner. Every other
+      // overlay in the shell parks there too, so after a window resize the balls
+      // stacked on top of each other.  Seed an absolute position on the right edge
+      // (vertically around 42%), persist it, and clamp it on every resize.
+      const FAB_W = 96
+      const FAB_H = 34
+      const defaultFab = () => {
+        const vw = window.innerWidth || 1280
+        const vh = window.innerHeight || 800
+        return { x: Math.max(8, vw - FAB_W - 20), y: Math.max(64, Math.round(vh * 0.42)) }
+      }
       const [fab, setFab] = useState(() => {
         try {
           const saved = JSON.parse(window.localStorage.getItem(FAB_POS) || 'null')
           if (saved && Number.isFinite(saved.x) && Number.isFinite(saved.y)) return saved
         } catch (err) { /* ignore */ }
-        return null
+        return defaultFab()
       })
       const fabRef = useRef(fab)
       const moveFab = (next) => {
@@ -3031,6 +3042,21 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         setFab(next)
         try { window.localStorage.setItem(FAB_POS, JSON.stringify(next)) } catch (err) { /* ignore */ }
       }
+      // A window resize must pull the launcher back inside the viewport instead of
+      // leaving it squeezed against (or outside) the bottom-right corner.
+      useEffect(() => {
+        const onResize = () => {
+          const cur = fabRef.current || defaultFab()
+          const vw = window.innerWidth || 1280
+          const vh = window.innerHeight || 800
+          moveFab({
+            x: Math.min(Math.max(8, cur.x), Math.max(8, vw - FAB_W - 8)),
+            y: Math.min(Math.max(8, cur.y), Math.max(8, vh - FAB_H - 8)),
+          })
+        }
+        window.addEventListener('resize', onResize)
+        return () => window.removeEventListener('resize', onResize)
+      }, [])
       const startFabDrag = (event) => {
         if (event.button !== 0) return
         const start = { x: event.clientX, y: event.clientY, fab: fabRef.current, moved: false }
@@ -3133,8 +3159,13 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         const onKey = (event) => {
           if (event.key === 'Escape') setOpen(false)
         }
+        const onWinResize = () => remember(clampGeom(geomRef.current))
+        window.addEventListener('resize', onWinResize)
         window.addEventListener('keydown', onKey)
-        return () => window.removeEventListener('keydown', onKey)
+        return () => {
+          window.removeEventListener('keydown', onKey)
+          window.removeEventListener('resize', onWinResize)
+        }
       }, [open])
       const startDrag = (event) => track(event, (start, e) => clampGeom({
         ...start.geom,
