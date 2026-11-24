@@ -2,6 +2,9 @@
 
 ## 1.24.2 (2026-11-24)
 
+- **Agent tool switch**: the panel header now has an `Agent` toggle that registers or
+  unregisters the `visio` drawing tool at runtime (persisted in `~/.dsh/visio-agent.json`);
+  `agentTool: false` in the plugin config disables it by default. Panel editing is unaffected.
 - **Floating launcher reworked to the UART plugin's three-state orb**: a 44px
   round ball that expands into a labelled capsule on hover and opens the floating
   canvas on click. Its position is stored as a viewport fraction, so resizing the

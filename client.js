@@ -16,6 +16,9 @@ window.__ModuleLoader__.load({
 
     const zh = {
       nav: 'Visio 图纸',
+  agentOn: 'Agent 开',
+  agentOff: 'Agent 关',
+  agentTip: 'AI 画图工具：允许 Agent 调用 visio 工具读写图纸；关闭后模型不再有画图权限（面板编辑不受影响）',
       title: 'Visio 图纸',
       subtitle: '读取、创建、修改 .vsdx，并实时预览',
       files: '图纸文件',
@@ -151,6 +154,9 @@ window.__ModuleLoader__.load({
 
     const en = {
       nav: 'Visio drawings',
+  agentOn: 'Agent on',
+  agentOff: 'Agent off',
+  agentTip: 'AI drawing tool: let the agent read and edit drawings through the visio tool. Off = no drawing access for the model; the panel still works.',
       title: 'Visio drawings',
       subtitle: 'Read, create and edit .vsdx with a live preview',
       files: 'Drawings',
@@ -796,6 +802,8 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
       const [files, setFiles] = useState([])
       const [filesBusy, setFilesBusy] = useState(false)
       const [filesError, setFilesError] = useState('')
+      // Whether the agent-side visio tool is enabled (host-side switch).
+      const [agentOn, setAgentOn] = useState(true)
       const [doc, setDoc] = useState(null)
       const [selected, setSelected] = useState(null)
       const [busy, setBusy] = useState(false)
@@ -957,7 +965,30 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           }
         })()
         return () => { cancelled = true }
+
       }, [loadFolder])
+
+      useEffect(() => {
+        let cancelled = false
+        ;(async () => {
+          try {
+            const result = await getJson(`${ROUTE}/agent`)
+            if (!cancelled) setAgentOn(result.enabled !== false)
+          } catch { /* the switch is optional */ }
+        })()
+        return () => { cancelled = true }
+      }, [])
+
+      const toggleAgent = useCallback(async () => {
+        const next = !agentOn
+        setAgentOn(next)
+        try {
+          const result = await postJson(`${ROUTE}/agent`, { enabled: next })
+          setAgentOn(result.enabled !== false)
+        } catch {
+          setAgentOn(!next)
+        }
+      }, [agentOn])
 
       const openFile = useCallback(async (path, page) => {
         try { window.localStorage.setItem(LAST_DOC, path) } catch (err) { /* ignore */ }
@@ -2432,6 +2463,14 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
               title: t('toggleInspector'),
               onClick: () => setInspectorOpen((value) => !value),
             }, '▤'),
+            h('button', { type: 'button',
+              className: `dshv-toggle${agentOn ? ' on' : ''}`,
+              title: t('agentTip'),
+              onClick: toggleAgent,
+              style: { width: 'auto', padding: '0 10px', display: 'inline-flex', alignItems: 'center', gap: '6px' },
+            },
+              h('span', { style: { width: '7px', height: '7px', borderRadius: '50%', background: agentOn ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-border-l2)' } }),
+              agentOn ? t('agentOn') : t('agentOff')),
             h(Btn, {
               variant: 'ghost',
               onClick: () => undoTo('undo'),

@@ -1,4 +1,6 @@
 - insert:
     - id: local-visio
       name: 'dsh-visio'
-      config: {}
+      config:
+        # 是否把 visio 画图工具注册给 Agent；面板里的 Agent 开关可随时运行时切换
+        agentTool: true
