@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.24.2 (2026-11-24)
+
+- **Floating launcher reworked to the UART plugin's three-state orb**: a 44px
+  round ball that expands into a labelled capsule on hover and opens the floating
+  canvas on click. Its position is stored as a viewport fraction, so resizing the
+  DSH window keeps it in the same relative place instead of pressing it into the
+  bottom-right corner where other overlays' balls sit. Drag still moves it; the
+  default anchor is 24px from the right and 96px from the bottom.
+
 ## 1.24.1 (2026-11-16)
 
 - **Ellipse geometry fixed**: the Ellipse row wrote A/B radii swapped, so a

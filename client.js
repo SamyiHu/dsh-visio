@@ -10,7 +10,7 @@ window.__ModuleLoader__.load({
     const PANEL_ID = 'dsh-visio'
     const POLL_MS = 2500
     // Bumped with every release: the footer shows it, so a stale bundle is obvious.
-    const CLIENT_BUILD = '1.24.1'
+    const CLIENT_BUILD = '1.24.2'
 
     /* ------------------------------------------------------------- locale */
 
@@ -2951,7 +2951,7 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
     const FLOAT_GEOM = 'dsh-visio.float.geom.v2'
 
     const CSS_FLOAT = `
-.dshv-fab{pointer-events:auto;position:fixed;right:20px;bottom:20px;z-index:2147482000;display:flex;align-items:center;gap:6px;
+.dshv-fab{pointer-events:auto;position:fixed;z-index:2147482000;display:flex;align-items:center;gap:8px;
   padding:8px 13px;border-radius:999px;background:var(--dsw-alias-bg-overlay);color:var(--dsw-alias-label-primary);
   border:1px solid var(--dsw-alias-border-l2);box-shadow:0 8px 22px rgba(0,0,0,.18);cursor:pointer;font-size:12px;
   font-weight:600;font-family:inherit;user-select:none}
@@ -3012,76 +3012,103 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
 .dshv-toggle.on{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1)}
 `
 
-    const FAB_POS = 'dsh-visio.fab.pos.v1'
+    const BUBBLE_POS = 'dsh-visio.bubble.pos.v1'
+    const FAB_POS_LEGACY = 'dsh-visio.fab.pos.v1'
+    const BUBBLE_SIZE = 44
+    const BUBBLE_GAP_RIGHT = 24
+    const BUBBLE_GAP_BOTTOM = 96      // clear of the corner other overlays park in
+    const TOP_SAFE = 56               // stay below the host chrome
 
     function FloatingVisio(props) {
       const { t } = props
       const [open, setOpen] = useState(false)
-      // the launcher itself is draggable; a drag must not toggle the window
-      // The launcher used to fall back to the CSS bottom-right corner. Every other
-      // overlay in the shell parks there too, so after a window resize the balls
-      // stacked on top of each other.  Seed an absolute position on the right edge
-      // (vertically around 42%), persist it, and clamp it on every resize.
-      const FAB_W = 96
-      const FAB_H = 34
-      const defaultFab = () => {
-        const vw = window.innerWidth || 1280
-        const vh = window.innerHeight || 800
-        return { x: Math.max(8, vw - FAB_W - 20), y: Math.max(64, Math.round(vh * 0.42)) }
-      }
-      const [fab, setFab] = useState(() => {
+      // Same three-state orb as the UART plugin: round ball -> hover capsule ->
+      // click opens the floating window.  The position is stored as a viewport
+      // FRACTION (not pixels), so CSS resolves it on every layout: shrinking or
+      // growing the DSH window keeps the ball in the same relative place and it
+      // never gets squeezed into the bottom-right corner on top of other balls.
+      const loadBubblePos = () => {
         try {
-          const saved = JSON.parse(window.localStorage.getItem(FAB_POS) || 'null')
-          if (saved && Number.isFinite(saved.x) && Number.isFinite(saved.y)) return saved
+          const saved = JSON.parse(window.localStorage.getItem(BUBBLE_POS) || 'null')
+          if (saved && Number.isFinite(saved.fx) && Number.isFinite(saved.fy)) {
+            return { fx: Math.min(1, Math.max(0, saved.fx)), fy: Math.min(1, Math.max(0, saved.fy)) }
+          }
+          const legacy = JSON.parse(window.localStorage.getItem(FAB_POS_LEGACY) || 'null')
+          if (legacy && Number.isFinite(legacy.x) && Number.isFinite(legacy.y)) {
+            return {
+              fx: Math.min(1, Math.max(0, legacy.x / Math.max(1, window.innerWidth))),
+              fy: Math.min(1, Math.max(0, legacy.y / Math.max(1, window.innerHeight))),
+            }
+          }
         } catch (err) { /* ignore */ }
-        return defaultFab()
-      })
-      const fabRef = useRef(fab)
-      const moveFab = (next) => {
-        fabRef.current = next
-        setFab(next)
-        try { window.localStorage.setItem(FAB_POS, JSON.stringify(next)) } catch (err) { /* ignore */ }
-      }
-      // A window resize must pull the launcher back inside the viewport instead of
-      // leaving it squeezed against (or outside) the bottom-right corner.
-      useEffect(() => {
-        const onResize = () => {
-          const cur = fabRef.current || defaultFab()
-          const vw = window.innerWidth || 1280
-          const vh = window.innerHeight || 800
-          moveFab({
-            x: Math.min(Math.max(8, cur.x), Math.max(8, vw - FAB_W - 8)),
-            y: Math.min(Math.max(8, cur.y), Math.max(8, vh - FAB_H - 8)),
-          })
+        return {
+          fx: 1 - (BUBBLE_SIZE + BUBBLE_GAP_RIGHT) / Math.max(1, window.innerWidth),
+          fy: 1 - (BUBBLE_SIZE + BUBBLE_GAP_BOTTOM) / Math.max(1, window.innerHeight),
         }
-        window.addEventListener('resize', onResize)
-        return () => window.removeEventListener('resize', onResize)
+      }
+      const [bubble, setBubble] = useState(loadBubblePos)
+      const bubbleRef = useRef(bubble)
+      bubbleRef.current = bubble
+      const [peek, setPeek] = useState(false)
+      const [capsuleW, setCapsuleW] = useState(160)
+      const hoverTimer = useRef(0)
+      const measureRef = useRef(null)
+      const clampBubble = (px) => ({
+        x: Math.min(Math.max(8, px.x), Math.max(8, window.innerWidth - BUBBLE_SIZE - 8)),
+        y: Math.min(Math.max(TOP_SAFE, px.y), Math.max(TOP_SAFE, window.innerHeight - BUBBLE_SIZE - 8)),
+      })
+      const toFraction = (px) => ({
+        fx: Math.min(1, Math.max(0, px.x / Math.max(1, window.innerWidth))),
+        fy: Math.min(1, Math.max(0, px.y / Math.max(1, window.innerHeight))),
+      })
+      const clearHover = () => {
+        if (hoverTimer.current) { clearTimeout(hoverTimer.current); hoverTimer.current = 0 }
+      }
+      const bubbleEnter = () => {
+        // Touch devices have no hover phase; a tap goes straight to the window.
+        if (typeof window.matchMedia === 'function' && window.matchMedia('(hover: none)').matches) return
+        clearHover()
+        setPeek(true)
+      }
+      const bubbleLeave = () => {
+        clearHover()
+        hoverTimer.current = setTimeout(() => setPeek(false), 200)
+      }
+      useEffect(() => () => clearHover(), [])
+      // Size the capsule to its content instead of a fixed width with dead space.
+      useEffect(() => {
+        const node = measureRef.current
+        if (node === null) return
+        const width = node.getBoundingClientRect().width
+        if (width > 0) setCapsuleW(Math.ceil(width + 28))
       }, [])
-      const startFabDrag = (event) => {
+      const startBubbleDrag = (event) => {
         if (event.button !== 0) return
-        const start = { x: event.clientX, y: event.clientY, fab: fabRef.current, moved: false }
+        event.preventDefault()
+        const origin = {
+          x: bubbleRef.current.fx * window.innerWidth,
+          y: bubbleRef.current.fy * window.innerHeight,
+        }
+        const start = { x: event.clientX, y: event.clientY, from: origin, moved: false, current: origin }
         const move = (e) => {
           const dx = e.clientX - start.x
           const dy = e.clientY - start.y
-          if (!start.moved && Math.abs(dx) + Math.abs(dy) < 4) return
-          start.moved = true
-          const vw = window.innerWidth || 1280
-          const vh = window.innerHeight || 800
-          const w = 96
-          const h = 34
-          moveFab({
-            x: Math.min(Math.max(8, (start.fab ? start.fab.x : vw - w - 20) + dx), vw - w - 8),
-            y: Math.min(Math.max(8, (start.fab ? start.fab.y : vh - h - 20) + dy), vh - h - 8),
-          })
+          // 4px dead zone: drag the ball vs. open the window.
+          if (!start.moved && Math.hypot(dx, dy) > 4) start.moved = true
+          if (!start.moved) return
+          start.current = clampBubble({ x: start.from.x + dx, y: start.from.y + dy })
+          setBubble(toFraction(start.current))
         }
         const up = () => {
           window.removeEventListener('pointermove', move)
           window.removeEventListener('pointerup', up)
-          if (!start.moved) setOpen((value) => !value)
+          if (!start.moved) { setOpen((value) => !value); return }
+          try { window.localStorage.setItem(BUBBLE_POS, JSON.stringify(toFraction(start.current))) } catch (err) { /* ignore */ }
         }
         window.addEventListener('pointermove', move)
         window.addEventListener('pointerup', up)
       }
+
       const [geom, setGeom] = useState(() => {
         let saved = null
         try { saved = JSON.parse(window.localStorage.getItem(FLOAT_GEOM) || 'null') } catch (err) { saved = null }
@@ -3180,12 +3207,61 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
 
       return h(React.Fragment, null,
         h('style', null, CSS_FLOAT),
-        h('div', {
-          className: `dshv-fab${open ? ' active' : ''}`,
+        h('button', {
+          type: 'button',
+          className: 'dshv-fab',
+          'aria-label': t('nav'),
+          'aria-expanded': peek ? 'true' : 'false',
           title: t('floatTip'),
-          style: fab ? { left: fab.x, top: fab.y, right: 'auto', bottom: 'auto' } : undefined,
-          onPointerDown: startFabDrag,
-        }, h(Icon, { size: 15 }), h('span', null, t('nav'))),
+          onPointerEnter: bubbleEnter,
+          onPointerLeave: bubbleLeave,
+          onFocus: bubbleEnter,
+          onBlur: bubbleLeave,
+          onPointerDown: startBubbleDrag,
+          onClick: (event) => { if (event.detail === 0) setOpen((value) => !value) },
+          style: {
+            position: 'fixed',
+            left: `clamp(8px, ${(bubble.fx * 100).toFixed(3)}%, calc(100% - ${BUBBLE_SIZE + 8}px))`,
+            top: `clamp(${TOP_SAFE}px, ${(bubble.fy * 100).toFixed(3)}%, calc(100% - ${BUBBLE_SIZE + 8}px))`,
+            width: peek ? capsuleW : BUBBLE_SIZE,
+            height: BUBBLE_SIZE,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: peek ? 'flex-start' : 'center',
+            gap: '8px',
+            padding: peek ? '0 14px' : '0',
+            borderRadius: '999px',
+            border: '1px solid var(--dsw-alias-border-l2)',
+            background: 'var(--dsw-alias-bg-layer-1)',
+            color: 'var(--dsw-alias-label-primary)',
+            boxShadow: '0 6px 20px rgba(0,0,0,0.22)',
+            cursor: 'pointer',
+            overflow: 'hidden',
+            whiteSpace: 'nowrap',
+            zIndex: 2147482200,
+            transition: 'width 160ms cubic-bezier(0.2, 0.8, 0.2, 1)',
+            touchAction: 'none',
+            userSelect: 'none',
+            fontFamily: 'inherit',
+            fontSize: '12px',
+            fontWeight: 600,
+          },
+        },
+          h('span', { style: { display: 'flex', flex: 'none' } }, h(Icon, { size: 20 })),
+          h('span', {
+            ref: measureRef,
+            'aria-hidden': 'true',
+            style: { position: 'absolute', left: '-9999px', top: 0, display: 'flex', alignItems: 'center', gap: '8px', whiteSpace: 'nowrap', pointerEvents: 'none' },
+          },
+            h(Icon, { size: 20 }),
+            h('span', { style: { fontSize: '12px', fontWeight: 600 } }, t('nav')),
+            h('span', { style: { fontSize: '12px' } }, '›')),
+          h('span', {
+            style: { display: peek ? 'flex' : 'none', alignItems: 'center', gap: '6px', marginLeft: '2px', pointerEvents: 'none' },
+          },
+            h('span', { style: { fontSize: '12px', fontWeight: 600 } }, t('nav')),
+            h('span', { style: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' } }, '›')),
+        ),
         open
           ? h('div', { className: 'dshv-float', style: { left: geom.x, top: geom.y, width: geom.w, height: geom.h } },
               h('div', { className: 'dshv-floatBar', onPointerDown: startDrag, onDoubleClick: maximize },
