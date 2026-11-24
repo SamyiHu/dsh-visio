@@ -120,6 +120,10 @@ const empty = render(panel, { t: (key) => key, pickFolder: async () => null })
 const emptyText = textOf(empty)
 assert.ok(emptyText.includes('noDocTitle'), 'empty state should show the "no document" title')
 assert.ok(findAll(empty, (n) => n.props?.className === 'dshv-empty').length >= 1)
+assert.equal(findAll(empty, (n) => n.props?.className === 'dshv-emptyCard').length, 1,
+  'empty state should be a card, not bare body copy')
+assert.ok(findAll(empty, (n) => n.props?.className === 'dshv-emptyIcon').length >= 1,
+  'empty state icon tile missing')
 
 // ---- 2. loaded drawing + inspector ---------------------------------------
 const state = {
@@ -155,6 +159,12 @@ const loadedTree = render(panel, { t: (key) => key, pickFolder: async () => null
 const loadedText = textOf(loadedTree)
 assert.ok(loadedText.includes('demo.vsdx'), 'header should show the file name')
 assert.ok(loadedText.includes('shapeData'), 'inspector sections should render')
+assert.equal(findAll(loadedTree, (n) => n.props?.className === 'dshv-inspHead').length, 1,
+  'inspector should have a sticky shape header')
+assert.ok(findAll(loadedTree, (n) => String(n.props?.className || '').includes('dshv-grid2')).length >= 1,
+  'geometry should use the two-column grid')
+assert.equal(findAll(loadedTree, (n) => String(n.props?.className || '').startsWith('dshv-segBtn')).length, 5,
+  'line-pattern segmented control should have five choices')
 assert.ok(findAll(loadedTree, (n) => n.props?.className === 'dshv-page').length >= 1, 'preview page missing')
 const injected = findAll(loadedTree, (n) => n.props?.dangerouslySetInnerHTML?.__html?.includes('data-shape-id'))
 assert.equal(injected.length, 1, 'preview svg should be injected once')

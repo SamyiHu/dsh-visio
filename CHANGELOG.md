@@ -2,6 +2,11 @@
 
 ## 1.24.2 (2026-11-24)
 
+- **Panel UI polish**: the header now groups its actions, shows the Agent switch as a
+  status pill and treats undo/redo as icons; list selection is a tint with a left rule
+  instead of a solid blue block; status errors are dismissible chips. The empty canvas is
+  a landing card with one primary action, and the inspector has a sticky shape header,
+  two-column geometry fields, segmented line-pattern/route pickers and a compact delete row.
 - **Agent tool switch**: the panel header now has an `Agent` toggle that registers or
   unregisters the `visio` drawing tool at runtime (persisted in `~/.dsh/visio-agent.json`);
   `agentTool: false` in the plugin config disables it by default. Panel editing is unaffected.

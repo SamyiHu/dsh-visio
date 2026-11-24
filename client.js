@@ -39,6 +39,9 @@ window.__ModuleLoader__.load({
       textShape: '文本',
       noShapes: '这一页还没有形状',
       selectShape: '在预览或列表里点一个形状来编辑。',
+      selectShapeHint: '在画布或左侧列表点选一个形状，这里会显示它的文字、位置、样式和数据。',
+      properties: '属性',
+      inspectorEmpty: '打开图纸后，这里会显示选中形状的属性。',
       text: '文本',
       textPlaceholder: '形状文字（支持多行）',
       geometry: '位置与大小',
@@ -58,6 +61,13 @@ window.__ModuleLoader__.load({
       route_left: '左侧',
       route_right: '右侧',
       route_auto: '自动',
+      startDir: '起点方向',
+      endDir: '终点方向',
+      patternSolid: '实线',
+      patternDash: '虚线',
+      patternDot: '点线',
+      patternDashDot: '点划线',
+      patternNone: '无',
       linkTool: '连线工具',
       needTarget: '没有对准任何形状，端点未移动',
       linkPickTarget: '已选起点 #{id}，再点目标形状完成连线',
@@ -71,12 +81,15 @@ window.__ModuleLoader__.load({
       style: '外观',
       fill: '填充',
       line: '线条',
+      linePattern: '线型',
       weight: '线宽',
       shapeData: '形状数据',
+      noProps: '暂无自定义属性',
       addProp: '添加属性',
       propName: '属性名',
       propValue: '值',
       deleteShape: '删除形状',
+      deleteHint: '删除后仍可用 Ctrl+Z 撤销',
       connectTo: '连接到',
       connect: '加连接线',
       connectedTo: '已连接到 #{id}',
@@ -150,6 +163,9 @@ window.__ModuleLoader__.load({
       autosave: '自动保存',
       externalChanged: '文件已在别处更新，预览已刷新',
       opFailed: '操作失败',
+      localOnly: '本地处理',
+      noVisioNeeded: '无需安装 Visio',
+      close: '关闭',
     }
 
     const en = {
@@ -177,6 +193,9 @@ window.__ModuleLoader__.load({
       textShape: 'Text',
       noShapes: 'This page has no shapes yet',
       selectShape: 'Click a shape in the preview or the list to edit it.',
+      selectShapeHint: 'Pick a shape on the canvas or in the list to edit its text, position, style and data.',
+      properties: 'Properties',
+      inspectorEmpty: 'Open a drawing, then select a shape to edit its properties here.',
       text: 'Text',
       textPlaceholder: 'Shape text (multi-line)',
       geometry: 'Position and size',
@@ -196,6 +215,13 @@ window.__ModuleLoader__.load({
       route_left: 'Left',
       route_right: 'Right',
       route_auto: 'Auto',
+      startDir: 'Start side',
+      endDir: 'End side',
+      patternSolid: 'Solid',
+      patternDash: 'Dash',
+      patternDot: 'Dot',
+      patternDashDot: 'Dash-dot',
+      patternNone: 'None',
       linkTool: 'Connect tool',
       needTarget: 'Not aligned with any shape; the end was not moved',
       linkPickTarget: 'Start #{id} picked, now click the target shape',
@@ -209,12 +235,15 @@ window.__ModuleLoader__.load({
       style: 'Appearance',
       fill: 'Fill',
       line: 'Line',
+      linePattern: 'Line pattern',
       weight: 'Weight',
       shapeData: 'Shape data',
+      noProps: 'No custom properties',
       addProp: 'Add property',
       propName: 'Name',
       propValue: 'Value',
       deleteShape: 'Delete shape',
+      deleteHint: 'You can undo this with Ctrl+Z',
       connectTo: 'Connect to',
       connect: 'Add connector',
       connectedTo: 'Connected to #{id}',
@@ -288,6 +317,9 @@ window.__ModuleLoader__.load({
       autosave: 'Auto-save',
       externalChanged: 'The file changed elsewhere; preview refreshed',
       opFailed: 'Operation failed',
+      localOnly: 'Runs locally',
+      noVisioNeeded: 'No Visio needed',
+      close: 'Close',
     }
 
     /* -------------------------------------------------------------- helpers */
@@ -465,10 +497,8 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
 .dshv-check{display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:6px;cursor:pointer}
 .dshv-check input{accent-color:var(--dsw-alias-brand-primary)}
 .dshv-miniLabel{font-size:11px;color:var(--dsw-alias-label-secondary);min-width:56px}
-.dshv-routeRow{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:4px}
 .dshv-warn{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px;color:var(--dsw-alias-state-error)}
 .dshv-row{display:flex;gap:6px;align-items:center}
-.dshv-grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;align-items:end}
 .dshv-col{min-width:0;flex:1 1 0}
 .dshv-col .dshv-input{width:100%;box-sizing:border-box}
 .dshv-col{flex:1;min-width:0}
@@ -504,6 +534,7 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
 .dshv-status{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:5px 14px;border-top:1px solid var(--dsw-alias-border-l1);
   font-size:11px;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-base);min-height:28px}
 .dshv-status .err{color:var(--dsw-alias-state-error-primary)}
+.dshv-status .dshv-statusText{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dshv-status .dshv-ver{font-size:10.5px;color:var(--dsw-alias-label-secondary);opacity:.75}
 .dshv-status .ok{color:var(--dsw-alias-state-success-primary)}
 .dshv-spinner{width:11px;height:11px;border-radius:50%;border:2px solid var(--dsw-alias-border-l2);border-top-color:var(--dsw-alias-brand-primary);
@@ -540,7 +571,7 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
     }
 
     /** Number input that only commits on blur / Enter. */
-    function NumberField({ label, value, onCommit, step = 0.05 }) {
+    function NumberField({ label, value, onCommit, step = 0.05, hideLabel = false }) {
       const [draft, setDraft] = useState(fmtInches(value))
       const [focused, setFocused] = useState(false)
       useEffect(() => {
@@ -557,7 +588,7 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         else setDraft(fmtInches(n))
       }
       return h('div', { className: 'dshv-col' },
-        h('div', { style: { fontSize: 10, color: 'var(--dsw-alias-label-secondary)', marginBottom: 2 } }, label),
+        hideLabel ? null : h('div', { className: 'dshv-colLabel' }, label),
         h('input', {
           className: 'dshv-input',
           type: 'number',
@@ -996,7 +1027,7 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         const state = await runOp({ action: 'open', path, page: page ?? 1 })
         if (state) {
           setDoc(state)
-        setError('')
+          setError('')
           try { window.localStorage.setItem('dsh-visio.folder', state.folder) } catch { /* ignore */ }
           if (state.folder !== folder) setFolder(state.folder)
         }
@@ -2617,12 +2648,19 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           h('div', { className: 'dshv-pane dshv-center' },
             nothingOpen
               ? h('div', { className: 'dshv-empty' },
-                  h(Icon, { size: 40 }),
-                  h('h2', null, t('noDocTitle')),
-                  h('p', null, pythonBroken ? t('pythonMissing') : t('noDocBody')),
-                  h('div', { className: 'dshv-row', style: { marginTop: 8 } },
-                    h(Btn, { onClick: () => setCreateOpen(true), disabled: !folder && !config?.defaultFolder }, t('newFile')),
-                    h(Btn, { variant: 'ghost', onClick: chooseFolder }, t('chooseFolder'))))
+                  h('div', { className: 'dshv-emptyCard' },
+                    h('div', { className: 'dshv-emptyIcon' }, h(Icon, { size: 28 })),
+                    h('h2', null, t('noDocTitle')),
+                    h('p', null, pythonBroken ? t('pythonMissing') : t('noDocBody')),
+                    h('div', { className: 'dshv-emptyActions' },
+                      h(Btn, { variant: 'primary', onClick: () => setCreateOpen(true), disabled: !folder && !config?.defaultFolder }, t('newFile')),
+                      h(Btn, { variant: 'ghost', onClick: chooseFolder }, t('chooseFolder'))),
+                    h('div', { className: 'dshv-emptyFoot' },
+                      h('span', null, 'VSDX'),
+                      h('span', null, '·'),
+                      h('span', null, t('localOnly')),
+                      h('span', null, '·'),
+                      h('span', null, t('noVisioNeeded')))))
               : h('div', { className: 'dshv-canvasOuter' },
                   h('div', {
                     className: `dshv-canvasWrap${tool === 'hand' ? ' dshv-hand' : ''}`,
@@ -2713,17 +2751,22 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
               onRouteStyle: routeStyle, onEndDirection: endDirection,
                   onDeselect: () => setSelected(null),
                 })
-              : h('div', { className: 'dshv-empty', style: { padding: 24 } },
-                  h('p', null, doc ? t('selectShape') : t('noDocBody'))))),
+              : h('div', { className: 'dshv-inspector dshv-inspectorEmpty' },
+                  h('div', { className: 'dshv-paneHead' },
+                    h('span', { className: 'dshv-paneTitle' }, t('properties'))),
+                  h('div', { className: 'dshv-empty dshv-emptySide' },
+                    h('div', { className: 'dshv-emptyIcon' }, h(Icon, { size: 20 })),
+                    h('p', null, doc ? t('selectShape') : t('inspectorEmpty')),
+                    doc ? h('div', { className: 'dshv-hint' }, t('selectShapeHint')) : null)))),
 
         h('div', { className: 'dshv-status' },
           busy ? h('span', { className: 'dshv-row' }, h('span', { className: 'dshv-spinner' }), t('busy')) : null,
-        error ? h('span', { className: 'err', title: error },
-          h('span', null, '⚠'),
-          h('span', { className: 'dshv-errText' }, error),
-          h('button', { type: 'button', className: 'dshv-errX', title: '关闭', onClick: () => setError('') }, '✕')) : null,
+          error ? h('span', { className: 'err', title: error },
+            h('span', null, '⚠'),
+            h('span', { className: 'dshv-errText' }, error),
+            h('button', { type: 'button', className: 'dshv-errX', title: t('close'), onClick: () => setError('') }, '✕')) : null,
           !error && notice ? h('span', { className: 'ok' }, notice) : null,
-          !error && !notice && !busy ? h('span', null, doc ? doc.path : t('preview')) : null,
+          !error && !notice && !busy ? h('span', { className: 'dshv-statusText', title: doc ? doc.path : undefined }, doc ? doc.path : t('preview')) : null,
           config && config.pythonOk === false ? h('span', { className: 'err' }, t('pythonMissing')) : null,
           configError ? h('span', { className: 'err' }, configError) : null,
           h('span', { className: 'dshv-grow' }),
@@ -2796,16 +2839,23 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
       const candidates = (doc.shapes || []).filter((item) => item.id !== shapeId && !item.connector)
       const props = Object.entries(detail.props || {})
 
-      return h('div', null,
-        h('div', { className: 'dshv-section' },
-          h('div', { className: 'dshv-sectionTitle' },
-            h('span', null, `${t('shape')} #${detail.id}`),
-            h(Btn, { small: true, variant: 'ghost', onClick: onDeselect }, t('deselect'))),
-          h('div', { className: 'dshv-hint' },
-            [detail.master || (shape ? shapeKindLabel(shape, t) : ''),
-             detail.type,
-             shape && shape.connects && shape.connects.length ? `→ ${shape.connects.map((c) => '#' + c.to).join(', ')}` : '']
-              .filter(Boolean).join(' · '))),
+      const angle = Number((shape && shape.angle) || 0)
+      const linePattern = detail.cells && detail.cells.LinePattern != null ? Number(detail.cells.LinePattern) : 1
+      const meta = [
+        '#' + detail.id,
+        detail.master || (shape ? shapeKindLabel(shape, t) : ''),
+        detail.type,
+        shape && shape.connects && shape.connects.length ? '→ ' + shape.connects.map((c) => '#' + c.to).join(', ') : '',
+      ].filter(Boolean).join(' · ')
+
+      return h('div', { className: 'dshv-inspector' },
+        h('div', { className: 'dshv-inspHead' },
+          h('div', { className: 'dshv-inspBadge' }, shape && shape.connector ? '↗' : (shape && shape.line ? '╱' : '▭')),
+          h('div', { className: 'dshv-inspTitleWrap' },
+            h('div', { className: 'dshv-inspTitle', title: shape ? shapeTitle(shape, t) : '' },
+              shape ? shapeTitle(shape, t) : (detail.text || t('unnamed'))),
+            h('div', { className: 'dshv-inspMeta', title: meta }, meta)),
+          h('button', { type: 'button', className: 'dshv-iconBtn', title: t('deselect'), onClick: onDeselect }, '✕')),
 
         h('div', { className: 'dshv-section' },
           h('div', { className: 'dshv-sectionTitle' }, t('text')),
@@ -2823,37 +2873,44 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           ? h('div', { className: 'dshv-section' },
               h('div', { className: 'dshv-sectionTitle' }, t('route')),
               h('div', { className: 'dshv-hint' }, t('routeHint')),
-              h('div', { className: 'dshv-routeRow' },
-                h('span', { className: 'dshv-miniLabel' }, '起点方向'),
-                ...[['top', '↑'], ['bottom', '↓'], ['left', '←'], ['right', '→']].map(([dir, glyph]) =>
-                  h(Btn, { key: 'start-' + dir, small: true, variant: 'ghost',
-                    title: '从 ' + dir + ' 侧引出', onClick: () => onEndDirection('start', dir) }, glyph))),
-              h('div', { className: 'dshv-routeRow' },
-                h('span', { className: 'dshv-miniLabel' }, '终点方向'),
-                ...[['top', '↑'], ['bottom', '↓'], ['left', '←'], ['right', '→']].map(([dir, glyph]) =>
-                  h(Btn, { key: 'end-' + dir, small: true, variant: 'ghost',
-                    title: '从 ' + dir + ' 侧进入', onClick: () => onEndDirection('end', dir) }, glyph))),
-              h('div', { className: 'dshv-routeRow' },
+              h('div', { className: 'dshv-routeBlock' },
+                h('div', { className: 'dshv-miniLabel' }, t('startDir')),
+                h('div', { className: 'dshv-seg' },
+                  ...[['top', '↑'], ['bottom', '↓'], ['left', '←'], ['right', '→']].map(([dir, glyph]) =>
+                    h('button', { key: 'start-' + dir, type: 'button', className: 'dshv-segBtn',
+                      title: t('startDir') + ': ' + dir, onClick: () => onEndDirection('start', dir) }, glyph)))),
+              h('div', { className: 'dshv-routeBlock' },
+                h('div', { className: 'dshv-miniLabel' }, t('endDir')),
+                h('div', { className: 'dshv-seg' },
+                  ...[['top', '↑'], ['bottom', '↓'], ['left', '←'], ['right', '→']].map(([dir, glyph]) =>
+                    h('button', { key: 'end-' + dir, type: 'button', className: 'dshv-segBtn',
+                      title: t('endDir') + ': ' + dir, onClick: () => onEndDirection('end', dir) }, glyph)))),
+              h('div', { className: 'dshv-routeAuto' },
                 h(Btn, { small: true, variant: 'ghost', onClick: () => onRouteStyle('auto') }, t('route_auto'))))
           : null,
 
         h('div', { className: 'dshv-section' },
           h('div', { className: 'dshv-sectionTitle' }, t('geometry')),
           linePts
-            ? h('div', { className: 'dshv-grid4' },
+            ? h('div', { className: 'dshv-grid2' },
                 h(NumberField, { label: 'X1', value: linePts[0][0], onCommit: (v) => onCommitLine([v, linePts[0][1]], [linePts[1][0], linePts[1][1]]) }),
                 h(NumberField, { label: 'Y1', value: linePts[0][1], onCommit: (v) => onCommitLine([linePts[0][0], v], [linePts[1][0], linePts[1][1]]) }),
                 h(NumberField, { label: 'X2', value: linePts[1][0], onCommit: (v) => onCommitLine([linePts[0][0], linePts[0][1]], [v, linePts[1][1]]) }),
                 h(NumberField, { label: 'Y2', value: linePts[1][1], onCommit: (v) => onCommitLine([linePts[0][0], linePts[0][1]], [linePts[1][0], v]) }))
-            : h('div', { className: 'dshv-grid4' },
+            : h('div', { className: 'dshv-grid2' },
                 h(NumberField, { label: t('x'), value: bbox.x, onCommit: (x) => onCommitMove(clampBox({ x })) }),
                 h(NumberField, { label: t('y'), value: bbox.y, onCommit: (y) => onCommitMove(clampBox({ y })) }),
                 h(NumberField, { label: t('width'), value: bbox.w, onCommit: (w) => onCommitMove(clampBox({ w })) }),
                 h(NumberField, { label: t('height'), value: bbox.h, onCommit: (h) => onCommitMove(clampBox({ h })) })),
-          linePts ? null : h('div', { className: 'dshv-grid4', style: { marginTop: 6 } },
-            h(NumberField, { label: t('rotation'), value: shape.angle || 0, step: 15,
-              onCommit: (v) => onCommitMove({ angle: v }) }),
-            h('div'), h('div'), h('div')),
+          linePts ? null : h('div', { className: 'dshv-rotRow' },
+            h('span', { className: 'dshv-miniLabel' }, t('rotation')),
+            h('div', { className: 'dshv-rotInput' },
+              h(NumberField, { hideLabel: true, label: t('rotation'), value: angle, step: 15,
+                onCommit: (v) => onCommitMove({ angle: v }) })),
+            h(Btn, { small: true, variant: 'ghost', title: '−90°',
+              onClick: () => onCommitMove({ angle: ((angle - 90) % 360 + 360) % 360 }) }, '−90°'),
+            h(Btn, { small: true, variant: 'ghost', title: '+90°',
+              onClick: () => onCommitMove({ angle: (angle + 90) % 360 }) }, '+90°')),
           outOfPage
             ? h('div', { className: 'dshv-warn' },
                 h('span', null, t('outOfPage')),
@@ -2880,33 +2937,33 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
                 const weight = Number(style.weight)
                 return Number.isFinite(weight) && weight > 0 ? Math.round(weight * 72 * 4) / 4 : 0.75
               })(),
-              key: `${shapeId}-weight`,
+              key: shapeId + '-weight',
               onBlur: (e) => {
                 const pt = Number(e.target.value)
                 if (Number.isFinite(pt) && pt >= 0) onCommitCell({ LineWeight: pt / 72 })
               },
               onKeyDown: (e) => { if (e.key === 'Enter') e.currentTarget.blur() },
-            }))),
-            h('div', { className: 'dshv-routeRow', style: { marginTop: 6 } },
-              h('span', { className: 'dshv-miniLabel' }, '线型'),
-              ...[['实线', 1], ['虚线', 2], ['点线', 3], ['点划线', 4], ['无', 0]].map(([label, value]) =>
-                h(Btn, { key: 'lp-' + value, small: true,
-                  variant: Number((detail.cells && detail.cells.LinePattern) || 1) === value ? 'primary' : 'ghost',
-                  onClick: () => onCommitCell({ LinePattern: value }) }, label))),
+            })),
+          h('div', { className: 'dshv-subhead' }, t('linePattern')),
+          h('div', { className: 'dshv-seg' },
+            ...[['patternSolid', 1], ['patternDash', 2], ['patternDot', 3], ['patternDashDot', 4], ['patternNone', 0]].map(([key, value]) =>
+              h('button', { key: 'lp-' + value, type: 'button',
+                className: 'dshv-segBtn' + (linePattern === value ? ' on' : ''),
+                onClick: () => onCommitCell({ LinePattern: value }) }, t(key))))),
 
         h('div', { className: 'dshv-section' },
           h('div', { className: 'dshv-sectionTitle' }, t('shapeData')),
           props.length
-            ? props.map(([name, value]) => h('div', { className: 'dshv-propRow', key: name },
+            ? h('div', { className: 'dshv-propList' }, props.map(([name, value]) => h('div', { className: 'dshv-propRow', key: name },
                 h('span', { className: 'dshv-propName', title: name }, name),
                 h('input', {
                   className: 'dshv-input',
                   defaultValue: value,
                   onBlur: (e) => { if (e.target.value !== value) onSetProp(name, e.target.value) },
                   onKeyDown: (e) => { if (e.key === 'Enter') e.currentTarget.blur() },
-                })))
-            : h('div', { className: 'dshv-hint' }, '—'),
-          h('div', { className: 'dshv-propRow', style: { marginTop: 6 } },
+                }))))
+            : h('div', { className: 'dshv-emptyMini' }, t('noProps')),
+          h('div', { className: 'dshv-propAdd' },
             h('input', { className: 'dshv-input', placeholder: t('propName'), value: propName, onChange: (e) => setPropName(e.target.value) }),
             h('input', { className: 'dshv-input', placeholder: t('propValue'), value: propValue, onChange: (e) => setPropValue(e.target.value) }),
             h(Btn, {
@@ -2928,7 +2985,7 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
               onChange: (e) => setConnectTarget(e.target.value),
             },
             h('option', { value: '' }, '—'),
-            candidates.map((item) => h('option', { key: item.id, value: item.id }, `#${item.id} ${shapeTitle(item, t)}`))),
+            candidates.map((item) => h('option', { key: item.id, value: item.id }, '#' + item.id + ' ' + shapeTitle(item, t)))),
             h(Btn, { small: true, disabled: !connectTarget, onClick: () => onConnect(connectTarget, connectLabel) }, t('connect'))),
           h('input', {
             className: 'dshv-input',
@@ -2938,8 +2995,11 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
             onChange: (e) => setConnectLabel(e.target.value),
           })),
 
-        h('div', { className: 'dshv-section' },
-          h(Btn, { variant: 'danger', onClick: onDelete }, t('deleteShape'))))
+        h('div', { className: 'dshv-section dshv-sectionDanger' },
+          h('div', { className: 'dshv-dangerRow' },
+            h('span', { className: 'dshv-hint' }, t('deleteHint')),
+            h(Btn, { small: true, variant: 'danger', onClick: onDelete }, t('deleteShape')))))
+
     }
 
     /* --------------------------------------------------------------- dialog */
@@ -3044,6 +3104,76 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
 .dshv-status .dshv-errX{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border:0;
   border-radius:4px;background:transparent;color:inherit;cursor:pointer;font-size:11px;line-height:1;padding:0}
 .dshv-status .dshv-errX:hover{background:rgba(229,72,77,.16)}
+
+/* ---- empty state: a real landing card instead of centred body copy ---- */
+.dshv-empty{display:flex;flex:1;align-items:center;justify-content:center;padding:28px;text-align:center;
+  color:var(--dsw-alias-label-secondary);min-height:0}
+.dshv-emptyCard{display:flex;flex-direction:column;align-items:center;box-sizing:border-box;width:100%;max-width:430px;
+  padding:30px 28px 24px;border:1px solid var(--dsw-alias-border-l1);border-radius:14px;
+  background:var(--dsw-alias-bg-layer-1);box-shadow:0 1px 2px rgba(0,0,0,.04),0 12px 32px rgba(0,0,0,.05)}
+.dshv-emptyIcon{display:flex;align-items:center;justify-content:center;width:58px;height:58px;
+  border-radius:16px;margin-bottom:14px;color:var(--dsw-alias-brand-primary);
+  background:color-mix(in srgb,var(--dsw-alias-brand-primary) 10%,transparent);
+  border:1px solid color-mix(in srgb,var(--dsw-alias-brand-primary) 18%,transparent)}
+.dshv-empty h2{font-size:16px;font-weight:600;color:var(--dsw-alias-label-primary);margin:0 0 6px}
+.dshv-empty p{margin:0;max-width:340px;font-size:12px;line-height:1.65}
+.dshv-emptyActions{display:flex;align-items:center;gap:8px;margin-top:18px}
+.dshv-emptyActions .dshv-btn{height:30px;padding:0 14px}
+.dshv-emptyFoot{display:flex;align-items:center;gap:8px;margin-top:18px;font-size:10.5px;
+  color:var(--dsw-alias-label-secondary);opacity:.8}
+.dshv-emptySide{display:flex;flex-direction:column;justify-content:center;padding:24px 20px;gap:0}
+.dshv-emptySide .dshv-emptyIcon{width:42px;height:42px;border-radius:12px;margin-bottom:12px}
+.dshv-emptySide p{max-width:230px;font-size:12px}
+.dshv-emptySide .dshv-hint{margin-top:6px;max-width:230px}
+
+/* ---- inspector: sticky shape header, two-column numbers, segmented pickers ---- */
+.dshv-right{scrollbar-gutter:stable}
+.dshv-inspector{display:flex;flex-direction:column;flex:1;min-height:0}
+.dshv-inspHead{position:sticky;top:0;z-index:4;display:flex;align-items:center;gap:9px;padding:10px 12px;
+  background:var(--dsw-alias-bg-layer-1);border-bottom:1px solid var(--dsw-alias-border-l1)}
+.dshv-inspBadge{display:flex;align-items:center;justify-content:center;width:30px;height:30px;flex:0 0 30px;
+  border-radius:8px;font-size:15px;color:var(--dsw-alias-brand-primary);
+  background:color-mix(in srgb,var(--dsw-alias-brand-primary) 10%,transparent)}
+.dshv-inspTitleWrap{flex:1;min-width:0}
+.dshv-inspTitle{font-size:12.5px;font-weight:600;color:var(--dsw-alias-label-primary);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dshv-inspMeta{font-size:10.5px;color:var(--dsw-alias-label-secondary);margin-top:1px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dshv-iconBtn{display:flex;align-items:center;justify-content:center;width:24px;height:24px;flex:0 0 24px;
+  border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary);
+  font:inherit;font-size:12px;line-height:1;cursor:pointer;padding:0}
+.dshv-iconBtn:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}
+.dshv-paneHead{display:flex;align-items:center;height:36px;flex:0 0 36px;padding:0 14px;
+  background:var(--dsw-alias-bg-layer-1);border-bottom:1px solid var(--dsw-alias-border-l1)}
+.dshv-paneTitle{font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--dsw-alias-label-secondary)}
+.dshv-grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 10px}
+.dshv-colLabel{font-size:10px;color:var(--dsw-alias-label-secondary);margin-bottom:3px;line-height:1.2;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dshv-rotRow{display:flex;align-items:center;gap:6px;margin-top:9px}
+.dshv-rotRow .dshv-miniLabel{min-width:0;flex:0 0 auto}
+.dshv-rotInput{width:82px;flex:0 0 82px}
+.dshv-rotRow .dshv-btn{height:26px;padding:0 7px}
+.dshv-subhead{font-size:10px;font-weight:600;letter-spacing:.06em;color:var(--dsw-alias-label-secondary);
+  margin:10px 0 5px}
+.dshv-seg{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:2px;padding:2px;border-radius:7px;
+  background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l1)}
+.dshv-segBtn{height:24px;min-width:0;border:0;border-radius:5px;background:transparent;color:var(--dsw-alias-label-secondary);
+  font:inherit;font-size:10.5px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 2px}
+.dshv-segBtn:hover{color:var(--dsw-alias-label-primary)}
+.dshv-segBtn.on{background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font-weight:600;
+  box-shadow:0 1px 2px rgba(0,0,0,.10)}
+.dshv-routeBlock{margin-bottom:8px}
+.dshv-routeBlock .dshv-miniLabel{display:block;margin-bottom:4px}
+.dshv-routeAuto{display:flex;justify-content:flex-end;margin-top:2px}
+.dshv-emptyMini{padding:9px;border:1px dashed var(--dsw-alias-border-l2);border-radius:7px;
+  font-size:11px;color:var(--dsw-alias-label-secondary);text-align:center}
+.dshv-propList{margin-bottom:2px}
+.dshv-propRow:hover .dshv-propName{color:var(--dsw-alias-label-primary)}
+.dshv-propAdd{display:flex;gap:6px;align-items:center;margin-top:8px}
+.dshv-sectionDanger{border-bottom:0}
+.dshv-dangerRow{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.dshv-dangerRow .dshv-hint{max-width:165px}
 `;
     const CSS_FLOAT = `
 .dshv-fab{pointer-events:auto;position:fixed;z-index:2147482000;display:flex;align-items:center;gap:8px;
