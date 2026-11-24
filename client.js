@@ -3205,6 +3205,16 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         h: Math.max(340, Math.min(window.innerHeight - 16, start.geom.h + e.clientY - start.y)),
       }))
 
+      // Expand towards the side that has room: when the ball sits near the right
+      // edge, anchor its RIGHT edge so the capsule grows leftwards (the same rule
+      // the UART plugin uses); otherwise keep the left edge and grow rightwards.
+      const bubblePxX = bubble.fx * window.innerWidth
+      const roomRight = window.innerWidth - (bubblePxX + BUBBLE_SIZE) - 8
+      const growLeft = roomRight < capsuleW - BUBBLE_SIZE
+      const bubbleX = growLeft
+        ? { right: Math.max(8, roomRight) + 'px', left: 'auto' }
+        : { left: `clamp(8px, ${(bubble.fx * 100).toFixed(3)}%, calc(100% - ${BUBBLE_SIZE + 8}px))`, right: 'auto' }
+
       return h(React.Fragment, null,
         h('style', null, CSS_FLOAT),
         h('button', {
@@ -3221,7 +3231,7 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           onClick: (event) => { if (event.detail === 0) setOpen((value) => !value) },
           style: {
             position: 'fixed',
-            left: `clamp(8px, ${(bubble.fx * 100).toFixed(3)}%, calc(100% - ${BUBBLE_SIZE + 8}px))`,
+            ...bubbleX,
             top: `clamp(${TOP_SAFE}px, ${(bubble.fy * 100).toFixed(3)}%, calc(100% - ${BUBBLE_SIZE + 8}px))`,
             width: peek ? capsuleW : BUBBLE_SIZE,
             height: BUBBLE_SIZE,
