@@ -996,6 +996,7 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         const state = await runOp({ action: 'open', path, page: page ?? 1 })
         if (state) {
           setDoc(state)
+        setError('')
           try { window.localStorage.setItem('dsh-visio.folder', state.folder) } catch { /* ignore */ }
           if (state.folder !== folder) setFolder(state.folder)
         }
@@ -1016,7 +1017,14 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         if (doc) return
         let last = ''
         try { last = window.localStorage.getItem(LAST_DOC) || '' } catch (err) { last = '' }
-        if (last) openFile(last, 1)
+        if (last) {
+          Promise.resolve(openFile(last, 1)).catch(() => {
+            // The remembered file was moved or deleted: forget it instead of
+            // leaving a red error pinned to the status bar.
+            try { window.localStorage.removeItem(LAST_DOC) } catch (err) { /* ignore */ }
+            setError('')
+          })
+        }
       }, [doc, openFile])
 
       // Keep the preview honest when the file is edited by the agent or another app.
@@ -2445,6 +2453,7 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         h('style', null, CSS),
         h('style', null, CSS_POLISH),
         h('style', null, CSS_FLOAT),
+        h('style', null, CSS_REFRESH),
         h('div', { className: 'dshv-head' },
           h('div', { className: 'dshv-headText' },
             h('div', { className: 'dshv-title' }, doc ? doc.name : t('title')),
@@ -2463,26 +2472,29 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
               title: t('toggleInspector'),
               onClick: () => setInspectorOpen((value) => !value),
             }, '▤'),
+            h('span', { className: 'dshv-sep' }),
             h('button', { type: 'button',
-              className: `dshv-toggle${agentOn ? ' on' : ''}`,
+              className: `dshv-switch${agentOn ? ' on' : ''}`,
               title: t('agentTip'),
               onClick: toggleAgent,
               style: { width: 'auto', padding: '0 10px', display: 'inline-flex', alignItems: 'center', gap: '6px' },
             },
-              h('span', { style: { width: '7px', height: '7px', borderRadius: '50%', background: agentOn ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-border-l2)' } }),
+              h('span', { className: 'dshv-dot' }),
               agentOn ? t('agentOn') : t('agentOff')),
+            h('span', { className: 'dshv-sep' }),
             h(Btn, {
               variant: 'ghost',
               onClick: () => undoTo('undo'),
               title: t('undoHint'),
               disabled: busy || !(doc && doc.canUndo),
-            }, `${String.fromCharCode(8630)} ${t('undo')}`),
+            }, String.fromCharCode(8630)),
             h(Btn, {
               variant: 'ghost',
               onClick: () => undoTo('redo'),
               title: t('redoHint'),
               disabled: busy || !(doc && doc.canRedo),
-            }, `${String.fromCharCode(8631)} ${t('redo')}`),
+            }, String.fromCharCode(8631)),
+            h('span', { className: 'dshv-sep' }),
             doc ? h(Btn, { variant: 'ghost', onClick: exportPng, title: t('exportPng'), disabled: busy }, t('export')) : null,
             h(Btn, {
               variant: 'ghost',
@@ -2706,7 +2718,10 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
 
         h('div', { className: 'dshv-status' },
           busy ? h('span', { className: 'dshv-row' }, h('span', { className: 'dshv-spinner' }), t('busy')) : null,
-          error ? h('span', { className: 'err' }, error) : null,
+        error ? h('span', { className: 'err', title: error },
+          h('span', null, '⚠'),
+          h('span', { className: 'dshv-errText' }, error),
+          h('button', { type: 'button', className: 'dshv-errX', title: '关闭', onClick: () => setError('') }, '✕')) : null,
           !error && notice ? h('span', { className: 'ok' }, notice) : null,
           !error && !notice && !busy ? h('span', null, doc ? doc.path : t('preview')) : null,
           config && config.pythonOk === false ? h('span', { className: 'err' }, t('pythonMissing')) : null,
@@ -2989,6 +3004,47 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
 
     const FLOAT_GEOM = 'dsh-visio.float.geom.v2'
 
+    const CSS_REFRESH = `
+/* ---- visual refresh: quieter chrome, one primary action, calmer list ---- */
+.dshv-head{height:48px;padding:0 14px;gap:12px;background:var(--dsw-alias-bg-layer-1);
+  border-bottom:1px solid var(--dsw-alias-border-l1)}
+.dshv-title{font-size:13px;font-weight:600;line-height:1.25}
+.dshv-sub{font-size:11px;line-height:1.3;margin-top:1px;color:var(--dsw-alias-label-secondary)}
+.dshv-actions{gap:4px}
+.dshv-actions .dshv-sep{width:1px;height:18px;background:var(--dsw-alias-border-l1);margin:0 4px;flex:0 0 1px}
+.dshv-btn{height:28px;padding:0 9px;border-radius:6px;font-size:12px;font-weight:500}
+.dshv-btn.ghost{color:var(--dsw-alias-label-secondary)}
+.dshv-btn.ghost:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}
+.dshv-btn.primary{font-weight:600;box-shadow:0 1px 1px rgba(0,0,0,.08)}
+.dshv-toggle{width:28px;height:28px;border-radius:6px;font-size:13px;color:var(--dsw-alias-label-secondary)}
+.dshv-toggle:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}
+.dshv-toggle.on{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}
+/* the agent switch is a status pill, not a button: it reads as "on/off" at a glance */
+.dshv-switch{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:999px;
+  border:1px solid var(--dsw-alias-border-l1);background:transparent;color:var(--dsw-alias-label-secondary);
+  font:inherit;font-size:11.5px;font-weight:600;cursor:pointer;white-space:nowrap}
+.dshv-switch .dshv-dot{width:7px;height:7px;border-radius:50%;background:var(--dsw-alias-border-l2)}
+.dshv-switch.on{border-color:var(--dsw-alias-brand-primary);background:rgba(47,111,191,.10);color:var(--dsw-alias-brand-primary)}
+.dshv-switch.on{border-color:color-mix(in srgb, var(--dsw-alias-brand-primary) 40%, transparent);
+  background:color-mix(in srgb, var(--dsw-alias-brand-primary) 10%, transparent)}
+.dshv-switch.on .dshv-dot{background:var(--dsw-alias-brand-primary)}
+.dshv-switch:hover{background:var(--dsw-alias-bg-layer-2)}
+/* list rows: tint instead of a solid blue block, so the tree stays readable */
+.dshv-file.active{background:rgba(47,111,191,.12);color:var(--dsw-alias-label-primary);
+  box-shadow:inset 2px 0 0 var(--dsw-alias-brand-primary)}
+.dshv-file.active{background:color-mix(in srgb, var(--dsw-alias-brand-primary) 12%, transparent)}
+.dshv-file.active .dshv-fileMeta{color:var(--dsw-alias-label-secondary)}
+.dshv-sectionTitle{font-size:10.5px;letter-spacing:.08em;margin-bottom:8px}
+.dshv-field{margin-bottom:8px}
+.dshv-input{height:27px}
+/* status bar: the error is a dismissible chip, not a red line that never clears */
+.dshv-status .err{display:inline-flex;align-items:center;gap:6px;max-width:72%;padding:3px 8px;border-radius:6px;
+  background:rgba(229,72,77,.08);border:1px solid rgba(229,72,77,.22)}
+.dshv-status .dshv-errText{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dshv-status .dshv-errX{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border:0;
+  border-radius:4px;background:transparent;color:inherit;cursor:pointer;font-size:11px;line-height:1;padding:0}
+.dshv-status .dshv-errX:hover{background:rgba(229,72,77,.16)}
+`;
     const CSS_FLOAT = `
 .dshv-fab{pointer-events:auto;position:fixed;z-index:2147482000;display:flex;align-items:center;gap:8px;
   padding:8px 13px;border-radius:999px;background:var(--dsw-alias-bg-overlay);color:var(--dsw-alias-label-primary);
