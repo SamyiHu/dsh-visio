@@ -17,7 +17,10 @@
     "icon.svg",
     "engine/*.py",
     "engine/shape_library.json",
-    "README.md"
+    "tests/*.mjs",
+    "tests/test_engine.py",
+    "README.md",
+    "README.en.md"
   ],
   "engines": {
     "node": ">=18",
@@ -59,5 +62,8 @@
     "svg"
   ],
   "author": "SamyiHu",
-  "homepage": "https://github.com/SamyiHu/dsh-visio#readme"
+  "homepage": "https://github.com/SamyiHu/dsh-visio#readme",
+  "scripts": {
+    "test": "python tests/test_engine.py && node tests/test_tool_integration.mjs && node tests/test_host_contract.mjs && node tests/test_client_contract.mjs"
+  }
 }

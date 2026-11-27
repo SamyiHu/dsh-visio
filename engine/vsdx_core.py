@@ -79,6 +79,19 @@ def _set_shape_text(el, text: str, runs: int = 0):
         cp.tail = ("\n" if i else "") + line
 
 
+_HEX6 = re.compile(r"^#[0-9A-Fa-f]{6}$")
+
+
+def _hex6(value, default=None):
+    """Strict '#RRGGBB' guard.  Everything that lands in an SVG attribute goes
+    through here: a 7-character cell value used to pass on length alone, so a
+    crafted .vsdx could close the attribute and inject markup into the panel."""
+    if not isinstance(value, str):
+        return default
+    text = value.strip()
+    return text.upper() if _HEX6.match(text) else default
+
+
 def _rgb(value, default=None):
     if not value:
         return default
@@ -625,7 +638,7 @@ class Vsdx:
         of w/h.  It overrides the built-in kind, so a model can compose any
         outline (arrow heads, decision gates, lane decorations) with line stacks,
         exactly the way the early drawings were produced.
-        """,
+        """
         part, root = self._page_root(page)
         shapes_el = root.find(_v("Shapes"))
         if shapes_el is None:
@@ -1733,8 +1746,8 @@ class Vsdx:
             if colors is not None:
                 for e in colors.findall(_v("ColorEntry")):
                     ix, rgb = e.get("IX"), e.get("RGB")
-                    if ix and rgb:
-                        pal[str(ix)] = rgb.upper()
+                    if ix and rgb and re.match(r"^[0-9A-Fa-f]{6}$", str(rgb).strip()):
+                        pal[str(ix)] = "#" + str(rgb).strip().upper()
         except (VsdxError, ET.ParseError):
             pass
         self._palette = pal
@@ -1745,8 +1758,9 @@ class Vsdx:
         if value is None:
             return None
         v = str(value).strip()
-        if v.startswith("#") and len(v) == 7:
-            return v.upper()
+        safe = _hex6(v)
+        if safe:
+            return safe
         if v.isdigit():
             return self.palette().get(v)
         if v.lower() == "themed":
@@ -1846,8 +1860,8 @@ class Vsdx:
                         name = ch.tag.split("}")[-1]
                         clr = list(ch)[0] if len(ch) else None
                         val = clr.get("val") if clr is not None else None
-                        if val:
-                            d[name] = "#" + val.upper()
+                        if val and re.match(r"^[0-9A-Fa-f]{6}$", str(val).strip()):
+                            d[name] = "#" + str(val).strip().upper()
                     out.append(d)
         except (VsdxError, ET.ParseError):
             pass
@@ -1910,9 +1924,10 @@ class Vsdx:
         accent = v0.get("varColor1") or theme.get("accent1")
 
         def shade(hex_color, factor):
-            if not hex_color:
+            safe = _hex6(hex_color)
+            if not safe:
                 return None
-            r, g, b = int(hex_color[1:3], 16), int(hex_color[3:5], 16), int(hex_color[5:7], 16)
+            r, g, b = int(safe[1:3], 16), int(safe[3:5], 16), int(safe[5:7], 16)
             return "#%02X%02X%02X" % (int(r * factor), int(g * factor), int(b * factor))
 
         def themed(name):
@@ -1933,8 +1948,9 @@ class Vsdx:
             txt = str(val).strip()
             if txt.lower() == "themed":
                 return themed(name)
-            if txt.startswith("#") and len(txt) == 7:
-                return txt.upper()
+            safe = _hex6(txt)
+            if safe:
+                return safe
             if txt.isdigit():
                 return self.palette().get(txt)
             return None
@@ -2378,7 +2394,7 @@ class Vsdx:
                     arrow_colors.add(_c)
         if arrow_colors:
             out.append("<defs>")
-            for _c in sorted(arrow_colors):
+            for _c in sorted({_hex6(c) or "#404040" for c in arrow_colors}):
                 out.append('<marker id="dshv-arrow-%s" viewBox="0 0 10 10" refX="9" refY="5" '
                            'markerWidth="5" markerHeight="5" orient="auto-start-reverse">'
                            '<path d="M 0 0 L 10 5 L 0 10 z" fill="%s"/></marker>' % (_c.lstrip("#"), _c))
@@ -2412,9 +2428,9 @@ class Vsdx:
                 out.append(open_group(s["id"]))
             st = self.style(s["id"], page)
             cells = self.shape(s["id"], page)["cells"]
-            fill = st.get("fill") or "#FFFFFF"
-            stroke = st.get("line") or "#404040"
-            text_color = st.get("text") or "#1A1A1A"
+            fill = _hex6(st.get("fill")) or "#FFFFFF"
+            stroke = _hex6(st.get("line")) or "#404040"
+            text_color = _hex6(st.get("text")) or "#1A1A1A"
             weight = st.get("weight_in") or 0.0104
             try:
                 fill_op = 1.0 - float(cells.get("FillForegndTrans") or 0.0)

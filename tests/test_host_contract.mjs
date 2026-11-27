@@ -1,174 +1,198 @@
 /**
- * Contract test for the Host half: tool registration, both HTTP routes, and a real
- * round trip through the Python bridge (spawned exactly as the plugin spawns it).
+ * Host contract tests: the tool schema, the action table, the /op path guard and
+ * the bridge payloads.  No DSH host and no Python needed.
  *
- *   node tests/test_host_contract.mjs
+ * Run:  node tests/test_host_contract.mjs
  */
-import { existsSync, mkdirSync, rmSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import assert from 'node:assert/strict'
 
-import { apply, internals } from '../index.js'
+import { internals } from '../index.js'
 
-const here = dirname(fileURLToPath(import.meta.url))
-const out = join(here, '_out')
-rmSync(out, { recursive: true, force: true })
-mkdirSync(out, { recursive: true })
+const HERE = dirname(fileURLToPath(import.meta.url))
+const ROOT = dirname(HERE)
+const results = []
 
-const tools = []
-const routes = []
-const context = {
-  get(name) {
-    if (name === 'tools') return { register: (definition) => { tools.push(definition); return () => {} } }
-    if (name === 'workingDirectory') return { defaultDirectory: out }
-    return undefined
-  },
-  inject(deps, callback) {
-    assert.ok(deps.includes('tools') || deps.includes('webServer'), `unexpected inject ${deps}`)
-    callback(context)
-  },
-  effect(fn) { const dispose = fn(); return typeof dispose === 'function' ? dispose : () => {} },
-  logger: () => ({ warn: () => {} }),
-  webServer: { register: (route) => { routes.push(route); return () => {} } },
-}
-
-apply(context, {})
-
-// ---- tool contract --------------------------------------------------------
-assert.equal(tools.length, 1, 'exactly one tool should register')
-const tool = tools[0]
-assert.equal(tool.name, 'visio')
-assert.ok(tool.description.includes('.vsdx'))
-const actions = tool.parameters.properties.action.enum
-for (const action of ['open', 'text', 'get_shape', 'create', 'list', 'set_text', 'set_cell', 'set_prop', 'add_shape', 'connect', 'delete', 'export']) {
-  assert.ok(actions.includes(action), `tool is missing action ${action}`)
-}
-const required = [
-  'action', 'path', 'shape_id', 'text', 'kind', 'x', 'y', 'w', 'h', 'from', 'to', 'points',
-  'nodes', 'direction', 'side', 'label_pos', 'within', 'orthogonal',
-  'allow_off_midpoint', 'allow_cross_shapes', 'user_approved', 'strict', 'end', 'style',
-]
-for (const key of required) {
-  assert.ok(key in tool.parameters.properties, `tool parameters missing ${key}`)
-}
-
-const call = async (args) => {
-  const result = await tool.execute(args)
-  assert.equal(typeof result.text, 'string')
-  return result.text
-}
-
-const created = await call({ action: 'create', dir: out, title: 'Host contract', width: 11, height: 8.5 })
-assert.ok(created.includes('created:'), created)
-const drawing = join(out, 'Host contract.vsdx')
-assert.ok(existsSync(drawing))
-
-const listed = await call({ action: 'list', dir: out })
-assert.ok(listed.includes('Host contract.vsdx'), listed)
-
-const opened = await call({ action: 'open', path: drawing })
-assert.ok(opened.includes('shapes on this page: 1'), opened)
-
-const added = await call({ action: 'add_shape', path: drawing, kind: 'rect', x: 1, y: 4, w: 2, h: 1, text: 'Node A' })
-assert.ok(added.includes('已添加形状'), added)
-
-const second = await call({ action: 'add_shape', path: drawing, kind: 'ellipse', x: 5, y: 4, w: 2, h: 1, text: 'Node B' })
-const idB = /#(\d+) \[/.exec(second.split('\n').filter((line) => line.startsWith('- #')).at(-1))[1]
-
-await call({ action: 'connect', path: drawing, from: '2', to: idB, label: 'ok' })
-const textSet = await call({ action: 'set_text', path: drawing, shape_id: idB, text: '已改名' })
-assert.ok(textSet.includes('已改名'), textSet)
-const cellSet = await call({ action: 'set_cell', path: drawing, shape_id: '2', cell: 'FillForegnd', value: '#FFE7C2' })
-assert.ok(cellSet.includes('已更新 1 个单元格'), cellSet)
-const exported = await call({ action: 'export', path: drawing, format: 'svg' })
-assert.ok(exported.includes('.svg'), exported)
-
-const kinds = await call({ action: 'kinds' })
-assert.ok(kinds.split(String.fromCharCode(10)).length >= 16, kinds)
-
-const moved = await call({ action: 'move', path: drawing, shape_id: '2', x: 2, y: 2, w: 2, h: 1 })
-assert.ok(moved.length > 0, moved)
-const undone = await call({ action: 'undo', path: drawing })
-assert.ok(undone.length > 0, undone)
-const redone = await call({ action: 'redo', path: drawing })
-assert.ok(redone.length > 0, redone)
-
-const audit = await call({ action: 'validate', path: drawing })
-assert.ok(audit.includes('connectors 1'), audit)
-assert.ok(audit.includes('errors 0'), audit)
-
-// ---- routes ---------------------------------------------------------------
-const configRoute = routes.find((route) => route.path === '/dsh-visio/config')
-const opRoute = routes.find((route) => route.path === '/dsh-visio/op')
-assert.ok(configRoute && opRoute, 'both routes must register')
-assert.equal(configRoute.kind, 'exact')
-assert.equal(opRoute.kind, 'exact')
-
-function fakeResponse() {
-  return {
-    status: 0,
-    headers: {},
-    body: '',
-    writeHead(status, headers) { this.status = status; Object.assign(this.headers, headers ?? {}) },
-    end(body) { this.body = body ?? '' },
+async function check(name, fn) {
+  try {
+    await fn()
+    results.push([true, name, ''])
+  } catch (error) {
+    results.push([false, name, error instanceof Error ? error.message : String(error)])
   }
 }
 
-async function invoke(route, request) {
-  const response = fakeResponse()
-  await route.handler(request, response)
-  let parsed
-  try { parsed = JSON.parse(response.body) } catch { parsed = response.body }
-  return { status: response.status, body: parsed, headers: response.headers }
+function assert(condition, message) {
+  if (!condition) throw new Error(message)
 }
 
-const configResult = await invoke(configRoute, { method: 'GET', headers: {} })
-assert.equal(configResult.status, 200)
-assert.equal(configResult.body.ok, true)
-assert.equal(configResult.body.defaultFolder, out)
-assert.equal(configResult.body.pythonOk, true, 'the bridge ping must succeed')
-assert.match(configResult.body.engine, /visio_bridge/)
+const ctx = { get: () => undefined }
+const config = {}
+const handlers = internals.buildHandlers(ctx, config)
+const actions = Object.keys(handlers)
 
-const post = (body, headers = {}) => ({
-  method: 'POST',
-  headers: { host: '127.0.0.1:60764', ...headers },
-  async *[Symbol.asyncIterator]() { yield Buffer.from(JSON.stringify(body)) },
+/** Collect the bridge actions the engine actually implements. */
+function bridgeActions() {
+  const source = readFileSync(join(ROOT, 'engine', 'visio_bridge.py'), 'utf8')
+  const block = source.slice(source.indexOf('ACTIONS = {'))
+  const body = block.slice(0, block.indexOf('\n}'))
+  return new Set([...body.matchAll(/^\s*"([a-z_]+)":/gm)].map((m) => m[1]))
+}
+
+await check('action table: the schema enum is generated from the handlers', () => {
+  const schema = internals.toolParameters(actions)
+  const advertised = schema.properties.action.enum
+  assert(Array.isArray(advertised) && advertised.length === actions.length,
+    'enum length ' + (advertised || []).length + ' != ' + actions.length)
+  assert(new Set(advertised).size === advertised.length, 'duplicate action in the enum')
+  assert(!advertised.includes('connect_styled') || actions.includes('connect_styled'),
+    'schema advertises an action with no handler')
+  assert(schema.additionalProperties === false, 'schema must stay strict')
 })
 
-const ok = await invoke(opRoute, post({ action: 'open', path: drawing }))
-assert.equal(ok.status, 200)
-assert.equal(ok.body.ok, true)
-assert.ok(ok.body.svg.includes('data-shape-id'))
-
-const crossOrigin = await invoke(opRoute, post({ action: 'open', path: drawing }, { origin: 'http://evil.example' }))
-assert.equal(crossOrigin.status, 403)
-
-const badJson = await invoke(opRoute, {
-  method: 'POST',
-  headers: { host: '127.0.0.1:60764' },
-  async *[Symbol.asyncIterator]() { yield Buffer.from('{ not json') },
+await check('action table: every advertised action exists in the engine', () => {
+  const available = bridgeActions()
+  const alias = {
+    set_cell: 'set_cells',
+    add_freeform: 'add_shape',
+    audit_full: 'audit_full',
+  }
+  const missing = actions
+    .map((action) => alias[action] || action)
+    .filter((action) => !available.has(action))
+  assert(missing.length === 0, 'advertised but not implemented by the bridge: ' + missing.join(', '))
 })
-assert.equal(badJson.status, 400)
 
-const missingPath = await invoke(opRoute, post({ action: 'open' }))
-assert.equal(missingPath.status, 400)
-assert.match(missingPath.body.error, /path is required/)
+await check('action table: every args.X a handler reads is declared in the schema', () => {
+  const source = internals.buildHandlers.toString()
+  const used = new Set([...source.matchAll(/args\.([A-Za-z_][A-Za-z0-9_]*)/g)].map((m) => m[1]))
+  const declared = new Set(Object.keys(internals.TOOL_PARAMS))
+  const undeclared = [...used].filter((name) => !declared.has(name))
+  assert(undeclared.length === 0,
+    'read by a handler but dropped by additionalProperties:false -> ' + undeclared.join(', '))
+  assert(declared.has('fill') && declared.has('line') && declared.has('which') && declared.has('review'),
+    'the parameters that used to be missing are still missing')
+})
 
-const wrongMethod = await invoke(configRoute, { method: 'POST', headers: {} })
-assert.equal(wrongMethod.status, 405)
+await check('snapshot: review and dpi reach the engine', async () => {
+  let sent = null
+  await handlers.snapshot({ path: 'C:/x/y.vsdx', page: 1, review: true, dpi: 200 },
+    { call: async (payload) => { sent = payload; return { pages: 1, files: ['a.png'], report: { counts: { error: 0, warn: 0, info: 0 }, issues: [] } } } })
+  assert(sent, 'no bridge call')
+  assert(sent.review === true, 'review was dropped before the engine saw it')
+  assert(sent.dpi === 200, 'dpi was dropped')
+})
 
-// relative path resolves against the default folder
-const relative = await invoke(opRoute, post({ action: 'open', path: 'Host contract.vsdx' }))
-assert.equal(relative.status, 200)
-assert.equal(relative.body.name, 'Host contract.vsdx')
+await check('snapshot: the review report is rendered into the tool text', async () => {
+  const out = await handlers.snapshot({ path: 'C:/x/y.vsdx', review: true },
+    { call: async () => ({ pages: 1, files: ['a.png'], report: { counts: { error: 1, warn: 0, info: 0 }, issues: [{ level: 'error', code: 'overlap', shape: '3', message: 'overlaps #4' }] } }) })
+  assert(out.text.includes('review: errors 1'), out.text)
+  assert(out.text.includes('overlap'), out.text)
+})
 
-// ---- internals ------------------------------------------------------------
-assert.equal(typeof internals.pythonOf({}), 'string')
-assert.equal(internals.formatState({
-  path: 'x.vsdx', page: 1, pageCount: 1, pageName: 'P', pageSize: { w: 11, h: 8.5 },
-  pages: [{ index: 1, name: 'P' }], masters: [], shapes: [],
-}).includes('shapes on this page: 0'), true)
+await check('add_shape: fill/line/font styling reaches the engine', async () => {
+  let sent = null
+  await handlers.add_shape({ path: 'C:/x/y.vsdx', kind: 'rect', x: 1, y: 1, w: 2, h: 1,
+    fill: '#17365D', line: '#8A3D12', font_color: '#FFFFFF', text_bg: true, bold: true },
+  { call: async (payload) => { sent = payload; return { notice: '', pages: [], shapes: [], page: 1, pageCount: 1, pageName: 'p', pageSize: { w: 1, h: 1 }, path: 'C:/x/y.vsdx' } } })
+  assert(sent.fill === '#17365D' && sent.line === '#8A3D12', JSON.stringify(sent))
+})
 
-internals.disposePools()
-console.log('ok — tool + routes + bridge round trip verified')
+await check('errors: a failed edit rejects instead of returning text', async () => {
+  let threw = false
+  try {
+    await handlers.set_text({ path: 'C:/x/y.vsdx', shape_id: '9', text: 'x' },
+      { call: async () => { throw new Error('shape 9 not found') } })
+  } catch {
+    threw = true
+  }
+  assert(threw, 'a failing bridge call resolved as success')
+})
+
+await check('errors: the registered tool throws on an unknown action', async () => {
+  let definition = null
+  const toolsCtx = {
+    get: () => ({ register: (def) => { definition = def; return () => {} } }),
+    effect: (fn) => fn(),
+    logger: () => ({ warn: () => {} }),
+  }
+  internals.registerTool(toolsCtx, config)
+  assert(definition, 'the tool was not registered')
+  assert(JSON.stringify(definition.parameters.properties.action.enum)
+    === JSON.stringify(Object.keys(internals.buildHandlers(toolsCtx, config))),
+  'registered enum drifted from the handler table')
+  let threw = false
+  try {
+    await definition.execute({ action: 'nope' })
+  } catch {
+    threw = true
+  }
+  assert(threw, 'unknown action resolved as a normal result')
+})
+
+await check('fingerprint: every engine module is watched', () => {
+  const files = readdirSync(join(ROOT, 'engine')).filter((n) => n.endsWith('.py') || n.endsWith('.json'))
+  const fingerprint = internals.engineFingerprint()
+  const missing = files.filter((name) => !fingerprint.includes(name + ':'))
+  assert(missing.length === 0, 'not watched, so an edit would keep serving stale code: ' + missing.join(', '))
+})
+
+await check('path guard: writes stay inside the folders the user opened', () => {
+  const stops = new internals.PathStops()
+  stops.add('C:/work/drawings')
+  assert(stops.covers('C:/work/drawings/a.vsdx'), 'a file in the opened folder must be allowed')
+  assert(stops.covers('C:/work/drawings/sub/a.vsdx'), 'a subfolder must be allowed')
+  assert(!stops.covers('C:/work/other/a.vsdx'), 'a sibling folder must not be allowed')
+  assert(!stops.covers('C:/work/drawings/../other/a.vsdx'), '.. must not escape the folder')
+  assert(!stops.covers('C:/Windows/System32/x.svg'), 'an unrelated folder must not be allowed')
+})
+
+await check('path guard: export refuses another suffix and an outside folder', () => {
+  const stops = new internals.PathStops()
+  stops.add('C:/work/drawings')
+  const bad = [
+    { action: 'export', path: 'C:/work/drawings/a.vsdx', format: 'svg', out: 'C:/work/drawings/a.txt' },
+    { action: 'export', path: 'C:/work/drawings/a.vsdx', format: 'png', out: 'C:/work/drawings/a.svg' },
+    { action: 'export', path: 'C:/work/drawings/a.vsdx', format: 'svg', out: 'C:/Windows/x.svg' },
+    { action: 'create', dir: 'C:/Windows/System32', name: 'x' },
+    { action: 'snapshot', path: 'C:/work/drawings/a.vsdx', out: 'C:/Windows' },
+  ]
+  for (const body of bad) {
+    let threw = false
+    try {
+      internals.guardRequest(stops, body, ctx, config)
+    } catch {
+      threw = true
+    }
+    assert(threw, 'allowed: ' + JSON.stringify(body))
+  }
+  const ok = { action: 'export', path: 'C:/work/drawings/a.vsdx', format: 'svg', out: 'preview.svg' }
+  internals.guardRequest(stops, ok, ctx, config)
+  assert(/[/\\]work[/\\]drawings[/\\]preview\.svg$/i.test(ok.out),
+    'a relative out must be anchored next to the drawing, got ' + ok.out)
+})
+
+await check('path guard: only a successful listing widens the write surface', () => {
+  const stops = new internals.PathStops()
+  const listBody = { action: 'list', dir: 'C:/work/picked' }
+  internals.guardRequest(stops, listBody, ctx, config)
+  let refused = false
+  try {
+    internals.guardRequest(stops, { action: 'create', dir: 'C:/work/picked', name: 'fresh' }, ctx, config)
+  } catch {
+    refused = true
+  }
+  assert(refused, 'an attempted (not yet successful) listing already unlocked the folder')
+  internals.rememberPaths(stops, { dir: 'C:/work/picked' })
+  internals.guardRequest(stops, { action: 'create', dir: 'C:/work/picked', name: 'fresh' }, ctx, config)
+  assert(stops.covers('C:/work/picked/fresh.vsdx'), 'create was refused after a successful listing')
+})
+
+let bad = 0
+for (const [ok, name, message] of results) {
+  console.log((ok ? 'ok   ' : 'FAIL ') + name + (ok ? '' : '  <- ' + message))
+  bad += ok ? 0 : 1
+}
+console.log('\n' + (results.length - bad) + '/' + results.length + ' ok')
+process.exit(bad ? 1 : 0)

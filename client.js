@@ -78,6 +78,30 @@ window.__ModuleLoader__.load({
       connect: '加连接线',
       connectedTo: '已连接到 #{id}',
       duplicatedAs: '已复制并连接 #{id}',
+      startDir: '起点方向',
+      endDir: '终点方向',
+      side_top: '上',
+      side_bottom: '下',
+      side_left: '左',
+      side_right: '右',
+      leaveFrom: '从#{side}侧引出',
+      enterFrom: '从#{side}侧进入',
+      lineStyle: '线型',
+      styleSolid: '实线',
+      styleDashed: '虚线',
+      styleDotted: '点线',
+      styleDashDot: '点划线',
+      styleNone: '无',
+      portStartTip: '起点 · 拖到另一个图形',
+      tipLength: '长 #{len} in',
+      tipFromTo: '起点 #{from} → 终点 #{to}',
+      tipNewStart: '新起点',
+      tipNewEnd: '新终点',
+      tipAltFree: ' (Alt 自由放置)',
+      tipOffsetY: '竖直偏移 #{dy} in',
+      tipOffsetX: '水平偏移 #{dx} in',
+      tipSnap: '[对齐]',
+      tipFine: '[精细]',
       connectLabel: '连接线文字',
       tools: '添加形状',
       addRect: '矩形',
@@ -213,6 +237,30 @@ window.__ModuleLoader__.load({
       connect: 'Add connector',
       connectedTo: 'Connected to #{id}',
       duplicatedAs: 'Duplicated and linked #{id}',
+      startDir: 'Start side',
+      endDir: 'End side',
+      side_top: 'top',
+      side_bottom: 'bottom',
+      side_left: 'left',
+      side_right: 'right',
+      leaveFrom: 'Leave from the #{side} side',
+      enterFrom: 'Enter from the #{side} side',
+      lineStyle: 'Line style',
+      styleSolid: 'Solid',
+      styleDashed: 'Dashed',
+      styleDotted: 'Dotted',
+      styleDashDot: 'Dash-dot',
+      styleNone: 'None',
+      portStartTip: 'Start point · drag onto another shape',
+      tipLength: 'length #{len} in',
+      tipFromTo: 'start #{from} → end #{to}',
+      tipNewStart: 'New start',
+      tipNewEnd: 'New end',
+      tipAltFree: ' (Alt = free placement)',
+      tipOffsetY: 'vertical offset #{dy} in',
+      tipOffsetX: 'horizontal offset #{dx} in',
+      tipSnap: '[snap]',
+      tipFine: '[fine]',
       connectLabel: 'Connector text',
       tools: 'Add shape',
       addRect: 'Rectangle',
@@ -880,8 +928,7 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         if (!options.quiet) setBusy(true)
         setError('')
         try {
-        try { window.__lastPayload = payload } catch (e) {}
-          const state = await postJson(`${ROUTE}/op`, payload)
+        const state = await postJson(`${ROUTE}/op`, payload)
           if (seq !== seqRef.current) return null
           if (options.light && state && state.svg === undefined) {
             setDoc((prev) => (prev ? {
@@ -913,6 +960,21 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         runOp({ action, path: current.path, page: current.page })
       }, [runOp])
 
+      // Ctrl+D / the inspector's copy button: duplicate in place, glued.
+      const duplicateSelection = useCallback(async () => {
+        const current = docRef.current
+        const id = selectedRef.current
+        if (!current) return
+        if (!id) {
+          setNotice(t('selectShape'))
+          return
+        }
+        await runOp({
+          action: 'duplicate', path: current.path, page: current.page,
+          shape_id: id, direction: 'right', connect: true,
+        })
+      }, [runOp, t])
+
       const endDirection = useCallback((end, direction) => {
         const current = docRef.current
         if (!current || !selectedRef.current) return
@@ -930,9 +992,8 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           setFiles(result.files || [])
           const next = result.dir || target
           setFolder(next)
-          try { window.localStorage.setItem('dsh-visio.folder', next) } catch (err) { /* ignore */ }
-          setFolderDraft(result.dir || target)
-          try { window.localStorage.setItem('dsh-visio.folder', result.dir || target) } catch { /* ignore */ }
+          setFolderDraft(next)
+          try { window.localStorage.setItem('dsh-visio.folder', next) } catch { /* ignore */ }
         } catch (err) {
           setFiles([])
           setFilesError(err instanceof Error ? err.message : String(err))
@@ -1195,9 +1256,10 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
             return
           }
           if ((event.ctrlKey || event.metaKey) && key === 'd') {
-            // duplicate the selection: a common companion to Del
+            // duplicate the selection: a common companion to Del.
+            // This used to only swallow the shortcut and print a hint.
             take()
-            if (selectedRef.current) setNotice(t('selectShape'))
+            duplicateSelection()
             return
           }
           if (event.ctrlKey || event.metaKey || event.altKey) return
@@ -1216,7 +1278,7 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
         // bubbling listener loses Ctrl+Z to them before the panel sees it.
         document.addEventListener('keydown', onKey, true)
         return () => document.removeEventListener('keydown', onKey, true)
-      }, [undoTo, removeShape])
+      }, [undoTo, removeShape, duplicateSelection])
 
       const useGuide = useCallback(async (direction) => {
         const current = docRef.current
@@ -1600,7 +1662,7 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
           c.setAttribute('r', '0.075')
           c.setAttribute('fill', '#2FBF71')
           c.setAttribute('data-port-role', 'start')
-          c.setAttribute('title', '起点 · 拖到另一个图形')
+          c.setAttribute('title', t('portStartTip'))
           c.setAttribute('fill-opacity', '0.95')
           c.setAttribute('stroke', '#FFFFFF')
           c.setAttribute('stroke-width', '2')
@@ -1871,7 +1933,8 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
               tip.style.display = 'block'
               tip.style.left = `${e.clientX - host.left + 14}px`
               tip.style.top = `${e.clientY - host.top - 30}px`
-              tip.textContent = `${to.x.toFixed(2)}, ${to.y.toFixed(2)}  长 ${Math.hypot(to.x - from.x, to.y - from.y).toFixed(2)} in`
+              const len = Math.hypot(to.x - from.x, to.y - from.y).toFixed(2)
+              tip.textContent = `${to.x.toFixed(2)}, ${to.y.toFixed(2)}  ${t('tipLength', { len })}`
             }
           }
           const up = () => {
@@ -1938,7 +2001,7 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
               tip.style.left = `${e.clientX - host.left + 14}px`
               tip.style.top = `${e.clientY - host.top - 30}px`
               tip.textContent = id2 && id2 !== fromId
-                ? `起点 #${fromId} → 终点 #${id2}`
+                ? t('tipFromTo', { from: '#' + fromId, to: '#' + id2 })
                 : t('connectHint')
             }
           }
@@ -2122,9 +2185,10 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
               tip.style.display = 'block'
               tip.style.left = `${e.clientX - host.left + 14}px`
               tip.style.top = `${e.clientY - host.top - 30}px`
+              const endLabel = which === 'start' ? t('tipNewStart') : t('tipNewEnd')
               tip.textContent = magnet
-                ? `${which === 'start' ? '新起点' : '新终点'} → #${near.id} (${near.port[0].toFixed(2)}, ${near.port[1].toFixed(2)})`
-                : `${which === 'start' ? '新起点' : '新终点'} ${wx.toFixed(2)}, ${wy.toFixed(2)}${near ? '  (Alt 自由放置)' : ''}`
+                ? `${endLabel} → #${near.id} (${near.port[0].toFixed(2)}, ${near.port[1].toFixed(2)})`
+                : `${endLabel} ${wx.toFixed(2)}, ${wy.toFixed(2)}${near ? t('tipAltFree') : ''}`
             }
           }
 
@@ -2144,7 +2208,7 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
               return
             }
             // No port within 0.25in: drop the end exactly where the pointer is and
-            // detach its glue, instead of refusing the drag with 未对准任何形状.
+            // detach its glue, instead of refusing the drag as "no target".
             runOp({ action: 'move_endpoint', path: current.path, page: current.page,
               shape_id: shapeId, end: which, x: world.x, y: world.y })
           }
@@ -2283,8 +2347,12 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
             tip.style.display = 'block'
             tip.style.left = `${e.clientX - host.left + 14}px`
             tip.style.top = `${e.clientY - host.top - 30}px`
-            const label = axis === 'y' ? `竖直偏移 ${(-dy).toFixed(3)} in` : `水平偏移 ${dx.toFixed(3)} in`
-            tip.textContent = magnet ? (snapped !== null ? `${label}   [对齐]` : label) : `${label}   [精细]`
+            const label = axis === 'y'
+              ? t('tipOffsetY', { dy: (-dy).toFixed(3) })
+              : t('tipOffsetX', { dx: dx.toFixed(3) })
+            tip.textContent = magnet
+              ? (snapped !== null ? `${label}   ${t('tipSnap')}` : label)
+              : `${label}   ${t('tipFine')}`
           }
           const up = (e) => {
             window.removeEventListener('pointermove', move)
@@ -2684,6 +2752,12 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
               pickFolder,
               onCancel: () => setCreateOpen(false),
               onCreate: async (payload) => {
+                // The host only lets the panel write into folders it has already
+                // seen (that is what keeps a script in the page from creating
+                // files anywhere on the machine). Listing the target folder first
+                // is the user-intent signal, and it also reports a folder that
+                // does not exist before we try to draw in it.
+                try { await postJson(`${ROUTE}/op`, { action: 'list', dir: payload.dir }) } catch { /* create reports it */ }
                 const state = await runOp({ action: 'create', ...payload })
                 if (state) {
                   setCreateOpen(false)
@@ -2770,15 +2844,17 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
               h('div', { className: 'dshv-sectionTitle' }, t('route')),
               h('div', { className: 'dshv-hint' }, t('routeHint')),
               h('div', { className: 'dshv-routeRow' },
-                h('span', { className: 'dshv-miniLabel' }, '起点方向'),
+                h('span', { className: 'dshv-miniLabel' }, t('startDir')),
                 ...[['top', '↑'], ['bottom', '↓'], ['left', '←'], ['right', '→']].map(([dir, glyph]) =>
                   h(Btn, { key: 'start-' + dir, small: true, variant: 'ghost',
-                    title: '从 ' + dir + ' 侧引出', onClick: () => onEndDirection('start', dir) }, glyph))),
+                    title: t('leaveFrom', { side: t('side_' + dir) }),
+                    onClick: () => onEndDirection('start', dir) }, glyph))),
               h('div', { className: 'dshv-routeRow' },
-                h('span', { className: 'dshv-miniLabel' }, '终点方向'),
+                h('span', { className: 'dshv-miniLabel' }, t('endDir')),
                 ...[['top', '↑'], ['bottom', '↓'], ['left', '←'], ['right', '→']].map(([dir, glyph]) =>
                   h(Btn, { key: 'end-' + dir, small: true, variant: 'ghost',
-                    title: '从 ' + dir + ' 侧进入', onClick: () => onEndDirection('end', dir) }, glyph))),
+                    title: t('enterFrom', { side: t('side_' + dir) }),
+                    onClick: () => onEndDirection('end', dir) }, glyph))),
               h('div', { className: 'dshv-routeRow' },
                 h(Btn, { small: true, variant: 'ghost', onClick: () => onRouteStyle('auto') }, t('route_auto'))))
           : null,
@@ -2834,8 +2910,9 @@ textarea.dshv-input{width:100%;box-sizing:border-box;height:auto;min-height:74px
               onKeyDown: (e) => { if (e.key === 'Enter') e.currentTarget.blur() },
             }))),
             h('div', { className: 'dshv-routeRow', style: { marginTop: 6 } },
-              h('span', { className: 'dshv-miniLabel' }, '线型'),
-              ...[['实线', 1], ['虚线', 2], ['点线', 3], ['点划线', 4], ['无', 0]].map(([label, value]) =>
+              h('span', { className: 'dshv-miniLabel' }, t('lineStyle')),
+              ...[[t('styleSolid'), 1], [t('styleDashed'), 2], [t('styleDotted'), 3],
+                [t('styleDashDot'), 4], [t('styleNone'), 0]].map(([label, value]) =>
                 h(Btn, { key: 'lp-' + value, small: true,
                   variant: Number((detail.cells && detail.cells.LinePattern) || 1) === value ? 'primary' : 'ghost',
                   onClick: () => onCommitCell({ LinePattern: value }) }, label))),

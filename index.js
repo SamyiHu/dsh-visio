@@ -14,8 +14,8 @@
  */
 import { spawn } from 'node:child_process'
 import { access } from 'node:fs/promises'
-import { statSync, readFileSync } from 'node:fs'
-import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { readdirSync, statSync, readFileSync } from 'node:fs'
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROUTE_PREFIX = '/dsh-visio'
@@ -28,7 +28,18 @@ const here = dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(readFileSync(join(here, 'package.json'), 'utf8'))
 const BRIDGE = join(here, 'engine', 'visio_bridge.py')
 
-const ENGINE_FILES = ['vsdx_core.py', 'visio_bridge.py', 'kinds.py', 'stencil.py', 'blank_doc.py', 'vsdx_png.py']
+// Every engine module, discovered instead of hand-listed: the hand-kept list had
+// drifted (svg_raster.py, which decides the PNG output, was missing, while the
+// unused vsdx_png.py was in it), so an edited renderer kept serving stale code.
+function engineFiles() {
+  try {
+    return readdirSync(join(here, 'engine'))
+      .filter((name) => name.endsWith('.py') || name.endsWith('.json'))
+      .sort()
+  } catch {
+    return []
+  }
+}
 
 
 /**
@@ -38,10 +49,10 @@ const ENGINE_FILES = ['vsdx_core.py', 'visio_bridge.py', 'kinds.py', 'stencil.py
  */
 function engineFingerprint() {
   try {
-    return ENGINE_FILES.map((name) => {
+    return engineFiles().map((name) => {
       const info = statSync(join(here, 'engine', name))
-      return `${name}:${Math.round(info.mtimeMs)}:${info.size}`
-    }).join('|')
+      return name + ':' + Math.round(info.mtimeMs) + ':' + info.size
+    }).join('|') || 'empty'
   } catch (error) {
     return 'missing'
   }
@@ -340,6 +351,109 @@ function defaultFolder(ctx, config) {
   return process.cwd()
 }
 
+/* -------------------------------------------------------------- path guard */
+
+/**
+ * Folders the user has actually reached through the panel: the default folder,
+ * plus anything they listed, opened or created in.  The /op route is same-origin
+ * only, but it used to accept any absolute path for reads AND writes, so a
+ * script injected into the panel could drop an SVG on top of any file on the
+ * machine, or make directories anywhere.  Reads stay permissive (the engine
+ * still refuses anything that is not .vsdx/.vsdm/.vssx/.vstx); writes are
+ * confined to these folders and to the matching file extension.
+ */
+class PathStops {
+  constructor() {
+    this.folders = new Set()
+  }
+
+  add(target) {
+    if (typeof target !== 'string' || !target.trim()) return
+    try {
+      this.folders.add(resolve(target).toLowerCase())
+    } catch {
+      /* a path the OS refuses is a path we cannot protect */
+    }
+  }
+
+  addFile(file) {
+    if (typeof file === 'string' && file.trim()) this.add(dirname(resolve(file)))
+  }
+
+  covers(target) {
+    if (typeof target !== 'string' || !target.trim()) return false
+    let full
+    try {
+      full = resolve(target).toLowerCase()
+    } catch {
+      return false
+    }
+    for (const folder of this.folders) {
+      if (full === folder) return true
+      if (full.startsWith(folder.endsWith(sep) ? folder : folder + sep)) return true
+    }
+    return false
+  }
+
+  get size() {
+    return this.folders.size
+  }
+}
+
+/** Actions whose "out" is a file the engine writes. */
+const OUT_IS_FILE = new Set(['export', 'stencil_sheet'])
+
+/**
+ * Normalise and police one /op payload before it reaches the engine.
+ * Mutates the body (a relative "out" is anchored next to the drawing) and
+ * throws BadRequest for anything that would write outside the user's folders.
+ */
+function guardRequest(stops, body, ctx, config) {
+  const action = body.action
+  if (OUT_IS_FILE.has(action) && typeof body.out === 'string' && body.out.trim()
+      && !isAbsolute(body.out)) {
+    const anchor = typeof body.path === 'string' && body.path
+      ? dirname(body.path)
+      : defaultFolder(ctx, config)
+    body.out = resolve(anchor, body.out)
+  }
+
+  if (action === 'export' && typeof body.out === 'string' && body.out.trim()) {
+    const want = String(body.format || 'svg').toLowerCase() === 'png' ? '.png' : '.svg'
+    if (!body.out.toLowerCase().endsWith(want)) {
+      throw new BadRequest('export out must end with ' + want)
+    }
+  }
+  if (action === 'stencil_sheet' && typeof body.out === 'string' && body.out.trim()
+      && !body.out.toLowerCase().endsWith('.png')) {
+    throw new BadRequest('stencil_sheet out must end with .png')
+  }
+
+  const writes = []
+  if (action === 'create' && typeof body.dir === 'string' && body.dir.trim()) {
+    writes.push(['dir', body.dir])
+  }
+  if (typeof body.out === 'string' && body.out.trim()) writes.push(['out', body.out])
+  for (const pair of writes) {
+    if (!stops.covers(pair[1])) {
+      throw new BadRequest('refusing to write outside the folders opened in the panel ('
+        + pair[0] + '): ' + pair[1])
+    }
+  }
+
+  return body
+}
+
+/** Remember every folder a successful request proved the user can reach. */
+function rememberPaths(stops, result) {
+  if (!isRecord(result)) return
+  if (typeof result.path === 'string') stops.addFile(result.path)
+  if (typeof result.folder === 'string') stops.add(result.folder)
+  if (typeof result.dir === 'string') stops.add(result.dir)
+  if (typeof result.out === 'string') stops.addFile(result.out)
+  if (Array.isArray(result.files)) for (const file of result.files) stops.addFile(file)
+}
+
 /* ------------------------------------------------------------------ routes */
 
 function json(response, status, payload) {
@@ -425,138 +539,525 @@ function route(ctx, path, methods, handler) {
 
 /* -------------------------------------------------------------------- tool */
 
-const TOOL_PARAMETERS = {
-  type: 'object',
-  properties: {
-    action: {
-      type: 'string',
-      enum: ['open', 'text', 'get_shape', 'create', 'list', 'set_text', 'set_cell', 'set_prop',
-        'add_shape', 'move', 'connect', 'probe', 'duplicate', 'route_style', 'bend',
-        'clear_route', 'delete', 'validate', 'kinds', 'stencils',
-        'add_anchor', 'swimlane', 'move_endpoint', 'set_end_direction', 'stencil_add', 'stencil_info', 'stencil_sheet', 'snapshot', 'capabilities',
-        'undo', 'redo', 'normalize', 'export'],
-      description:
-        'open reads a drawing (pages, page size, shapes with ids/text/bbox, and a text outline); '
-        + 'text dumps every page as markdown; get_shape returns every ShapeSheet cell of one shape; '
-        + 'list lists .vsdx/.vsdm files in a folder; create builds a new blank drawing; '
-        + 'set_text / set_cell / set_prop / add_shape / move / connect / delete modify the file in place; '
-        + 'validate audits relationships (empty links, floating endpoints, dangling ids); '
-        + 'kinds lists the 16 built-in shape kinds; stencils / stencil_info / stencil_sheet / stencil_add '
-        + 'list, describe, contact-sheet and import a .vssx/.vstx master; '
-        + 'snapshot renders every page to PNG; capabilities lists this surface; '
-        + 'undo / redo step through the edit history (25 steps); export writes an SVG or PNG preview.',
-    },
-    path: { type: 'string', description: 'Absolute path to the .vsdx/.vsdm file.' },
-    page: { type: 'integer', description: '1-based page number; defaults to 1.' },
-    shape_id: { type: 'string', description: 'Shape ID as reported by open/get_shape.' },
-    text: { type: 'string', description: 'New shape text for set_text, or the label of a new shape/connector.' },
-    cell: { type: 'string', description: 'ShapeSheet cell name for set_cell, e.g. FillForegnd, LineColor, LineWeight, PinX, Width.' },
-    name: { type: 'string', description: 'Shape-data property name for set_prop.' },
-    value: { type: 'string', description: 'Cell or property value for set_cell/set_prop (colors as #RRGGBB).' },
-    kind: {
-      type: 'string',
-      enum: ['rect', 'roundrect', 'terminator', 'ellipse', 'diamond', 'triangle', 'parallelogram',
-        'trapezoid', 'hexagon', 'chevron', 'arrow_right', 'arrow_left', 'arrow_up', 'arrow_down',
-        'text', 'line'],
-      description: 'Shape kind for add_shape (see action=kinds for the full list).',
-    },
-    stencil: { type: 'string', description: 'Path to a .vssx/.vstx stencil for stencil_add.' },
-    master: { type: 'string', description: 'Master name or 0-based index inside the stencil.' },
-    direction: { type: 'string', enum: ['right', 'left', 'up', 'down'],
-      description: 'probe / duplicate: which side of the shape to look at or copy onto.' },
-    gap: { type: 'number', description: 'duplicate: inches between the source and the copy (default 0.4).' },
-    connect: { type: 'boolean', description: 'duplicate: glue a connector to the copy (default true).' },
-    style: { type: 'string', enum: ['auto', 'up', 'down', 'left', 'right'],
-      description: 'route_style: which way a connector should detour (auto = back to automatic routing).' },
-    file: { type: 'string', description: 'Path to a .vssx/.vstx stencil for stencil_info / stencil_sheet / stencils.' },
-    all: { type: 'boolean', description: 'snapshot: render every page (default: current page only).' },
-    dpi: { type: 'number', description: 'snapshot: pixels per inch (default 110).' },
-    x: { type: 'number', description: 'Left edge in inches (origin bottom-left) for add_shape.' },
-    y: { type: 'number', description: 'Bottom edge in inches for add_shape.' },
-    w: { type: 'number', description: 'Width in inches for add_shape.' },
-    h: { type: 'number', description: 'Height in inches for add_shape.' },
-    from: { type: 'string', description: 'Source shape id for connect.' },
-    to: { type: 'string', description: 'Target shape id for connect.' },
-    from_port: { type: 'array', items: { type: 'number' }, description: 'connect / connect_styled: [x,y] in sheet inches that pins the START to an exact point (read a connection point with get_shape) instead of letting the router choose a side.' },
-    to_port: { type: 'array', items: { type: 'number' }, description: 'connect / connect_styled: [x,y] in sheet inches that pins the END to an exact point — use it so an arrow lands dead-centre on a border instead of diving inside the shape.' },
-    label: { type: 'string', description: 'Optional text on the new connector.' },
-    side: { type: 'string', enum: ['top', 'bottom', 'left', 'right'], description: 'add_anchor: which side of the shape to hang the invisible anchor on (default top).' },
-    nodes: { type: 'array', items: { type: 'string' }, description: 'swimlane: shape ids that belong to the row. The band is sized from their bounding box, so it can never clip them.' },
-    owner: { type: 'string', description: 'swimlane: owner line next to the title, e.g. ｜市场 PM · 库制作人.' },
-    pad_x: { type: 'number', description: 'swimlane: horizontal padding around the nodes (default 0.45in).' },
-    pad_bottom: { type: 'number', description: 'swimlane: space under the nodes (default 0.30in).' },
-    head: { type: 'number', description: 'swimlane: header height above the nodes (default 0.42in).' },
-    orthogonal: { type: 'boolean', description: 'connect_styled: reject diagonal segments instead of drawing them (default true). Pass false only for a deliberate diagonal.' },
-    within: { type: 'array', items: { type: 'number' }, description: 'connect_styled: [x, y, w, h] in inches. Every waypoint must stay inside this box (e.g. a lane) or the call is rejected.' },
-    label_pos: { description: 'connect_styled: where the label goes — auto | above | below | left | right | [x, y] in inches. Non-auto modes nudge the label off any shape it would cover.' },
-    allow_cross_shapes: { type: 'boolean', description: 'connect_styled: allow a segment to pass through an unrelated shape. Requires user_approved=true — ask the user first.' },
-    allow_off_midpoint: { type: 'boolean', description: 'connect_styled: allow an end to sit on a shape border away from the four side midpoints. Requires user_approved=true — ask the user first and quote their approval.' },
-    user_approved: { type: 'boolean', description: 'Set only after the user explicitly agreed to bypass the midpoint rule in this conversation.' },
-    strict: { type: 'boolean', description: 'audit_full: fail (ok=false) when any error or warning remains.' },
-    dir: { type: 'string', description: 'Folder to list, or to create the new drawing in.' },
-    title: { type: 'string', description: 'Document title for create; also drawn as the heading.' },
-    width: { type: 'number', description: 'Page width in inches for create (default 11).' },
-    height: { type: 'number', description: 'Page height in inches for create (default 8.5).' },
-    format: { type: 'string', enum: ['svg', 'png'], description: 'Export format for export; default svg.' },
-    out: { type: 'string', description: 'Output path for export; defaults next to the drawing.' },
-    geometry: { type: 'array', description: 'add_shape escape hatch: [[x,y],...] vertices in 0..1 fractions of w/h (or absolute inches >1.5). Overrides kind; use it to compose ANY silhouette (arrow heads, gates) when the 16 kinds and shape library are not enough.' },
-    font_color: { type: 'string', description: 'add_shape: #RRGGBB text colour. White on a dark fill gives the professional two-line look.' },
-    font_size: { type: 'number', description: 'add_shape: font size in points (default 11).' },
-    bold: { type: 'boolean', description: 'add_shape: bold first text line (default true).' },
-    line_pattern: { type: 'integer', description: 'add_shape: 1 solid, 2 dashed, 0 none.' },
-    line_width: { type: 'number', description: 'add_shape / connect: line width in inches. Use ~0.02 on a generated diagram so short arrows stay visible.' },
-    line_color: { type: 'string', description: 'connect: #RRGGBB line colour. Use different colours for normal flow / rework / cross-lane links.' },
-    points: { type: 'array', description: 'connect_styled / set_route: orthogonal waypoints [[x,y],...] in sheet inches for a deliberate cross-lane route.' },
-    text_bg: { type: 'boolean', description: 'add_shape: true = white text background, false = transparent. Use true on labels over lines; leave false on dark filled nodes.' },
-    angle: { type: 'number', description: 'add_shape/move: rotation in degrees, counter-clockwise.' },
-    shape_ids: { type: 'array', description: 'align: list of shape ids to snap together.' },
-    mode: { type: 'string', enum: ['edges', 'centres', 'ports'], description: 'align: which reference lines to snap to.' },
-    end: { type: 'string', enum: ['start', 'end'], description: 'move_endpoint / set_end_direction: which end of the connector to adjust.' },
-    direction: { type: 'string', enum: ['top', 'bottom', 'left', 'right'], description: 'set_end_direction: which side of the shape the connector end should leave from.' },
-    shape: { type: 'object', description: 'shape_save: the shape spec to cache (must contain kind or geometry).' },
-    review: { type: 'boolean', description: 'snapshot: attach a structured overlap/out-of-page/text-overflow/connectivity report. Use review=true as the CHECK STAGE of every drawing task.' },
+/**
+ * Parameters shared by every visio action.  Advertised keys are the single
+ * source of truth: anything a handler reads must be declared here (the schema
+ * is additionalProperties:false, so an undeclared name never reaches a handler).
+ */
+const TOOL_PARAMS = {
+  path: { type: 'string', description: 'Absolute path to the .vsdx/.vsdm file.' },
+  page: { type: 'integer', description: '1-based page number; defaults to 1.' },
+  shape_id: { type: 'string', description: 'Shape ID as reported by open/get_shape.' },
+  text: { type: 'string', description: 'New shape text for set_text, or the label of a new shape/connector.' },
+  cell: { type: 'string', description: 'ShapeSheet cell name for set_cell, e.g. FillForegnd, LineColor, LineWeight, PinX, Width.' },
+  name: { type: 'string', description: 'Shape-data property name for set_prop / shape_save.' },
+  value: { type: 'string', description: 'Cell or property value for set_cell/set_prop (colors as #RRGGBB).' },
+  kind: {
+    type: 'string',
+    enum: ['rect', 'roundrect', 'terminator', 'ellipse', 'diamond', 'triangle', 'parallelogram',
+      'trapezoid', 'hexagon', 'chevron', 'arrow_right', 'arrow_left', 'arrow_up', 'arrow_down',
+      'text', 'line'],
+    description: 'Shape kind for add_shape (see action=kinds for the full list).',
   },
-  required: ['action'],
-  additionalProperties: false,
+  stencil: { type: 'string', description: 'Path to a .vssx/.vstx stencil for stencil_add.' },
+  master: { type: 'string', description: 'Master name or 0-based index inside the stencil.' },
+  direction: { type: 'string', enum: ['right', 'left', 'up', 'down', 'top', 'bottom'],
+    description: 'probe / duplicate / add_anchor: which side of the shape to look at or copy onto.' },
+  gap: { type: 'number', description: 'duplicate / add_anchor: inches between the source and the copy (default 0.4).' },
+  connect: { type: 'boolean', description: 'duplicate: glue a connector to the copy (default true).' },
+  style: { type: 'string', enum: ['auto', 'up', 'down', 'left', 'right'],
+    description: 'route_style: which way a connector should detour (auto = back to automatic routing).' },
+  file: { type: 'string', description: 'Path to a .vssx/.vstx stencil for stencil_info / stencil_sheet / stencils.' },
+  all: { type: 'boolean', description: 'snapshot: render every page (default: current page only).' },
+  dpi: { type: 'number', description: 'snapshot / export png: pixels per inch (default 110, max 400).' },
+  x: { type: 'number', description: 'Left edge in inches (origin bottom-left) for add_shape / move_endpoint / bend.' },
+  y: { type: 'number', description: 'Bottom edge in inches for add_shape / move_endpoint / bend.' },
+  w: { type: 'number', description: 'Width in inches for add_shape.' },
+  h: { type: 'number', description: 'Height in inches for add_shape.' },
+  from: { type: 'string', description: 'Source shape id for connect.' },
+  to: { type: 'string', description: 'Target shape id for connect.' },
+  from_port: { type: 'array', items: { type: 'number' }, description: 'connect / connect_styled: [x,y] in sheet inches that pins the START to an exact point instead of letting the router choose a side.' },
+  to_port: { type: 'array', items: { type: 'number' }, description: 'connect / connect_styled: [x,y] in sheet inches that pins the END to an exact point - use it so an arrow lands dead-centre on a border instead of diving inside the shape.' },
+  label: { type: 'string', description: 'Optional text on the new connector.' },
+  side: { type: 'string', enum: ['top', 'bottom', 'left', 'right'], description: 'add_anchor: which side of the shape to hang the invisible anchor on (default top).' },
+  nodes: { type: 'array', items: { type: 'string' }, description: 'swimlane: shape ids that belong to the row. The band is sized from their bounding box, so it can never clip them.' },
+  owner: { type: 'string', description: 'swimlane: owner line next to the title.' },
+  pad_x: { type: 'number', description: 'swimlane: horizontal padding around the nodes (default 0.45in).' },
+  pad_bottom: { type: 'number', description: 'swimlane: space under the nodes (default 0.30in).' },
+  head: { type: 'number', description: 'swimlane: header height above the nodes (default 0.42in).' },
+  orthogonal: { type: 'boolean', description: 'connect_styled: reject diagonal segments instead of drawing them (default true). Pass false only for a deliberate diagonal.' },
+  within: { type: 'array', items: { type: 'number' }, description: 'connect_styled: [x, y, w, h] in inches. Every waypoint must stay inside this box (e.g. a lane) or the call is rejected.' },
+  label_pos: { description: 'connect_styled: where the label goes - auto | above | below | left | right | [x, y] in inches.' },
+  allow_cross_shapes: { type: 'boolean', description: 'connect_styled: allow a segment to pass through an unrelated shape. Requires user_approved=true - ask the user first.' },
+  allow_off_midpoint: { type: 'boolean', description: 'connect_styled: allow an end to sit on a shape border away from the four side midpoints. Requires user_approved=true - ask the user first and quote their approval.' },
+  user_approved: { type: 'boolean', description: 'Set only after the user explicitly agreed to bypass the midpoint rule in this conversation.' },
+  strict: { type: 'boolean', description: 'audit_full: fail (tool error) when any error or warning remains.' },
+  dir: { type: 'string', description: 'Folder to list, or to create the new drawing in.' },
+  title: { type: 'string', description: 'Document title for create; also drawn as the heading.' },
+  width: { type: 'number', description: 'Page width in inches for create (default 11).' },
+  height: { type: 'number', description: 'Page height in inches for create (default 8.5).' },
+  overwrite: { type: 'boolean', description: 'create: overwrite an existing file of the same name (default false).' },
+  format: { type: 'string', enum: ['svg', 'png'], description: 'Export format for export; default svg.' },
+  out: { type: 'string', description: 'Output path for export / stencil_sheet (a folder for snapshot); defaults next to the drawing.' },
+  geometry: { type: 'array', description: 'add_shape escape hatch: [[x,y],...] vertices in 0..1 fractions of w/h (or absolute inches >1.5). Overrides kind; use it to compose ANY silhouette when the 16 kinds and shape library are not enough.' },
+  fill: { type: 'string', description: 'add_shape / swimlane: #RRGGBB fill colour.' },
+  line: { type: 'string', description: 'add_shape / swimlane: #RRGGBB border colour (line_color is the connector equivalent).' },
+  font_color: { type: 'string', description: 'add_shape: #RRGGBB text colour. White on a dark fill gives the professional two-line look.' },
+  font_size: { type: 'number', description: 'add_shape: font size in points (default 11).' },
+  bold: { type: 'boolean', description: 'add_shape: bold first text line (default true).' },
+  line_pattern: { type: 'integer', description: 'add_shape: 1 solid, 2 dashed, 0 none.' },
+  line_width: { type: 'number', description: 'add_shape / connect_styled: line width in inches. Use ~0.02 on a generated diagram so short arrows stay visible.' },
+  line_color: { type: 'string', description: 'connect_styled: #RRGGBB line colour.' },
+  points: { type: 'array', description: 'connect_styled / set_route: orthogonal waypoints [[x,y],...] in sheet inches for a deliberate cross-lane route.' },
+  text_bg: { type: 'boolean', description: 'add_shape: true = white text background, false = transparent.' },
+  angle: { type: 'number', description: 'add_shape/move: rotation in degrees, counter-clockwise.' },
+  shape_ids: { type: 'array', description: 'align: list of shape ids to snap together.' },
+  mode: { type: 'string', enum: ['edges', 'centres', 'ports'], description: 'align: which reference lines to snap to.' },
+  end: { type: 'string', enum: ['start', 'end'], description: 'move_endpoint / set_end_direction: which end of the connector to adjust.' },
+  shape: { type: 'object', description: 'shape_save: the shape spec to cache (must contain kind or geometry).' },
+  which: { type: 'string', description: 'guide: ask for one topic instead of the whole playbook (e.g. "swimlane", "connectors", "colour").' },
+  review: { type: 'boolean', description: 'snapshot: attach a structured overlap/out-of-page/text-overflow/connectivity report. Use review=true as the CHECK STAGE of every drawing task.' },
+  tol: { type: 'number', description: 'probe: tolerance in inches for "in the way" (default 0.35).' },
+  reach: { type: 'number', description: 'probe: how far to search in inches (default 3.0).' },
+}
+
+const ACTION_HELP =
+  'Open, edit, audit, render and export Microsoft Visio .vsdx/.vsdm drawings without Visio installed. '
+  + 'Coordinates are inches with the origin at the bottom-left of the page; shape bbox = {x,y,w,h}. '
+  + 'open returns pages, page size, shape ids with text and bbox, and a text outline. '
+  + 'Edits save in place and keep a bounded .bak-<timestamp> history. '
+  + 'The DSH Visio panel in the sidebar edits the same files visually. '
+  + 'A failed call is reported as a tool error, never as a successful text result.'
+
+/** Build the tool schema for exactly the actions this build implements. */
+function toolParameters(actions) {
+  return {
+    type: 'object',
+    properties: Object.assign({
+      action: {
+        type: 'string',
+        enum: actions,
+        description: 'The operation to run. ' + actions.join(', ') + '.',
+      },
+    }, TOOL_PARAMS),
+    required: ['action'],
+    additionalProperties: false,
+  }
 }
 
 function formatState(state) {
   const lines = []
   const pages = state.pages ?? []
-  lines.push(`file: ${state.path}`)
-  lines.push(`page ${state.page}/${state.pageCount} "${state.pageName}" — ${state.pageSize.w.toFixed(2)} x ${state.pageSize.h.toFixed(2)} in`)
-  lines.push(`pages: ${pages.map((p) => `${p.index}:${p.name}`).join(', ')}`)
+  lines.push('file: ' + state.path)
+  lines.push('page ' + state.page + '/' + state.pageCount + ' "' + state.pageName + '" - '
+    + state.pageSize.w.toFixed(2) + ' x ' + state.pageSize.h.toFixed(2) + ' in')
+  lines.push('pages: ' + pages.map((p) => p.index + ':' + p.name).join(', '))
   if (Array.isArray(state.masters) && state.masters.length) {
-    lines.push(`masters: ${state.masters.map((m) => m.name).filter(Boolean).join(', ')}`)
+    lines.push('masters: ' + state.masters.map((m) => m.name).filter(Boolean).join(', '))
   }
   const shapes = state.shapes ?? []
-  lines.push(`shapes on this page: ${shapes.length}`)
+  lines.push('shapes on this page: ' + shapes.length)
   for (const shape of shapes.slice(0, 60)) {
     const bb = shape.bbox ?? {}
     const kind = shape.connector ? 'connector' : (shape.master || shape.geometry?.[0] || 'shape')
     lines.push(
-      `- #${shape.id} [${kind}] ${JSON.stringify(shape.text ?? '')} `
-      + `bbox ${bb.x},${bb.y} ${bb.w}x${bb.h}`
-      + (shape.connects?.length ? ` -> ${shape.connects.map((c) => c.to).join(',')}` : ''),
+      '- #' + shape.id + ' [' + kind + '] ' + JSON.stringify(shape.text ?? '') + ' '
+      + 'bbox ' + bb.x + ',' + bb.y + ' ' + bb.w + 'x' + bb.h
+      + (shape.connects?.length ? ' -> ' + shape.connects.map((c) => c.to).join(',') : ''),
     )
   }
-  if (shapes.length > 60) lines.push(`… ${shapes.length - 60} more shapes`)
-  if (state.notice) lines.push('', `notice: ${state.notice}`)
+  if (shapes.length > 60) {
+    lines.push('... ' + (shapes.length - 60) + ' more shapes not listed here '
+      + '(their bbox/text exist: use action=get_shape, or action=text for the whole outline)')
+  }
+  if (state.notice) lines.push('', 'notice: ' + state.notice)
   return lines.join('\n')
+}
+
+/**
+ * One handler per advertised action, keyed by the action name the model passes.
+ * The schema enum is generated from these keys, so "advertised but not
+ * implemented" and "implemented but not advertised" can no longer drift apart.
+ */
+function buildHandlers(ctx, config) {
+  const withDeps = (fn) => async (args, overrides) => fn(args, Object.assign({
+    call: (payload) => runBridge(config, payload),
+    ctx,
+    config,
+  }, overrides || {}))
+
+  const noticeState = (result) => [result?.notice ?? '', formatState(result)].join('\n\n').trim()
+
+  return {
+    open: withDeps(async (args, { call }) => {
+      const state = await call({ action: 'open', path: args.path, page: args.page })
+      const outline = await call({ action: 'text', path: args.path })
+      return { text: formatState(state) + '\n\n' + outline.text }
+    }),
+
+    text: withDeps(async (args, { call }) => {
+      const result = await call({ action: 'text', path: args.path })
+      return { text: result.text }
+    }),
+
+    get_shape: withDeps(async (args, { call }) => {
+      const result = await call({
+        action: 'get_shape', path: args.path, page: args.page, shape_id: args.shape_id,
+      })
+      return { text: JSON.stringify(result.detail, null, 2) }
+    }),
+
+    list: withDeps(async (args, { call }) => {
+      const result = await call({ action: 'list', dir: args.dir ?? defaultFolder(ctx, config) })
+      const files = result.files ?? []
+      return {
+        text: files.length
+          ? files.map((file) => file.name + '\t' + file.size + ' bytes\t' + file.path).join('\n')
+          : 'no .vsdx/.vsdm files in ' + result.dir,
+      }
+    }),
+
+    create: withDeps(async (args, { call }) => {
+      const result = await call({
+        action: 'create',
+        dir: args.dir ?? defaultFolder(ctx, config),
+        name: args.title || 'drawing',
+        title: args.title,
+        width: args.width,
+        height: args.height,
+        overwrite: args.overwrite,
+      })
+      return { text: formatState(result) + '\n\ncreated: ' + result.path }
+    }),
+
+    set_text: withDeps(async (args, { call }) => {
+      const state = await call({
+        action: 'set_text', path: args.path, page: args.page,
+        shape_id: args.shape_id, text: args.text,
+      })
+      return { text: noticeState(state) }
+    }),
+
+    set_cell: withDeps(async (args, { call }) => {
+      const state = await call({
+        action: 'set_cells', path: args.path, page: args.page, shape_id: args.shape_id,
+        cells: { [String(args.cell)]: String(args.value ?? '') },
+      })
+      return { text: noticeState(state) }
+    }),
+
+    set_prop: withDeps(async (args, { call }) => {
+      const state = await call({
+        action: 'set_prop', path: args.path, page: args.page, shape_id: args.shape_id,
+        name: args.name, value: String(args.value ?? ''),
+      })
+      return { text: noticeState(state) }
+    }),
+
+    delete: withDeps(async (args, { call }) => {
+      const state = await call({
+        action: 'delete', path: args.path, page: args.page, shape_id: args.shape_id,
+      })
+      return { text: noticeState(state) }
+    }),
+
+    add_shape: withDeps(async (args, { call }) => {
+      const state = await call({
+        action: 'add_shape', path: args.path, page: args.page,
+        kind: args.kind ?? 'rect',
+        x: args.x ?? 1, y: args.y ?? 1, w: args.w ?? 1.6, h: args.h ?? 0.8,
+        text: args.text ?? '',
+        fill: args.fill, line: args.line,
+        font_color: args.font_color, font_size: args.font_size, bold: args.bold,
+        line_pattern: args.line_pattern, line_width: args.line_width,
+        angle: args.angle, text_bg: args.text_bg,
+      })
+      return { text: noticeState(state) }
+    }),
+
+    add_freeform: withDeps(async (args, { call }) => {
+      const state = await call({
+        action: 'add_shape', path: args.path, page: args.page,
+        x: args.x, y: args.y, w: args.w, h: args.h, text: args.text,
+        kind: args.kind || 'rect', geometry: args.geometry,
+        fill: args.fill, line: args.line, font_color: args.font_color,
+        font_size: args.font_size, bold: args.bold, line_pattern: args.line_pattern,
+        line_width: args.line_width, angle: args.angle,
+      })
+      return { text: noticeState(state) }
+    }),
+
+    move: withDeps(async (args, { call }) => {
+      const state = await call({
+        action: 'move', path: args.path, page: args.page, shape_id: args.shape_id,
+        x: args.x, y: args.y, w: args.w, h: args.h, angle: args.angle,
+      })
+      return { text: noticeState(state) }
+    }),
+
+    move_endpoint: withDeps(async (args, { call }) => {
+      const state = await call({
+        action: 'move_endpoint', path: args.path, page: args.page,
+        shape_id: args.shape_id, end: args.end, x: args.x, y: args.y,
+      })
+      return { text: noticeState(state) }
+    }),
+
+    set_end_direction: withDeps(async (args, { call }) => {
+      const state = await call({
+        action: 'set_end_direction', path: args.path, page: args.page,
+        shape_id: args.shape_id, end: args.end, direction: args.direction,
+      })
+      return { text: noticeState(state) }
+    }),
+
+    align: withDeps(async (args, { call }) => {
+      const result = await call({
+        action: 'align', path: args.path, page: args.page,
+        shape_ids: args.shape_ids, mode: args.mode,
+      })
+      return {
+        text: 'aligned ' + result.moved.length + ' shape(s) by ' + result.mode + ': '
+          + JSON.stringify(result.moved),
+      }
+    }),
+
+    connect: withDeps(async (args, { call }) => {
+      const state = await call({
+        action: 'connect', path: args.path, page: args.page, from: args.from, to: args.to,
+        label: args.label ?? args.text ?? '',
+        from_port: args.from_port, to_port: args.to_port,
+      })
+      return { text: noticeState(state) }
+    }),
+
+    connect_styled: withDeps(async (args, { call }) => {
+      const result = await call({
+        action: 'connect_styled', path: args.path, page: args.page,
+        from: args.from, to: args.to, label: args.label ?? args.text ?? '',
+        points: args.points, line_color: args.line_color, line_pattern: args.line_pattern,
+        line_width: args.line_width, from_port: args.from_port, to_port: args.to_port,
+        orthogonal: args.orthogonal, within: args.within, label_pos: args.label_pos,
+        allow_off_midpoint: args.allow_off_midpoint, allow_cross_shapes: args.allow_cross_shapes,
+        user_approved: args.user_approved,
+      })
+      return {
+        text: 'connector #' + result.connector + ' (' + result.points + ' waypoints, '
+          + result.line_color + (result.dashed ? ', dashed' : '') + ')',
+      }
+    }),
+
+    probe: withDeps(async (args, { call }) => {
+      const result = await call({
+        action: 'probe', path: args.path, page: args.page, shape_id: args.shape_id,
+        direction: args.direction, gap: args.gap, tol: args.tol, reach: args.reach,
+      })
+      return { text: JSON.stringify(result, null, 2) }
+    }),
+
+    duplicate: withDeps(async (args, { call }) => {
+      const state = await call({
+        action: 'duplicate', path: args.path, page: args.page, shape_id: args.shape_id,
+        direction: args.direction, gap: args.gap, connect: args.connect,
+      })
+      return { text: noticeState(state) }
+    }),
+
+    route_style: withDeps(async (args, { call }) => {
+      const state = await call({
+        action: 'route_style', path: args.path, page: args.page,
+        shape_id: args.shape_id, style: args.style,
+      })
+      return { text: noticeState(state) }
+    }),
+
+    set_route: withDeps(async (args, { call }) => {
+      const state = await call({
+        action: 'set_route', path: args.path, page: args.page,
+        shape_id: args.shape_id, points: args.points,
+      })
+      return { text: noticeState(state) }
+    }),
+
+    bend: withDeps(async (args, { call }) => {
+      const state = await call({
+        action: 'bend', path: args.path, page: args.page,
+        shape_id: args.shape_id, x: args.x, y: args.y,
+      })
+      return { text: noticeState(state) }
+    }),
+
+    clear_route: withDeps(async (args, { call }) => {
+      const state = await call({
+        action: 'clear_route', path: args.path, page: args.page, shape_id: args.shape_id,
+      })
+      return { text: noticeState(state) }
+    }),
+
+    add_anchor: withDeps(async (args, { call }) => {
+      const result = await call({
+        action: 'add_anchor', path: args.path, page: args.page,
+        shape_id: args.shape_id, side: args.side, gap: args.gap,
+      })
+      return {
+        text: 'anchor #' + result.anchor + ' on #' + result.shape + ' (' + result.side + ') at '
+          + result.x.toFixed(3) + ', ' + result.y.toFixed(3),
+      }
+    }),
+
+    swimlane: withDeps(async (args, { call }) => {
+      const result = await call({
+        action: 'swimlane', path: args.path, page: args.page, nodes: args.nodes,
+        title: args.title, owner: args.owner, fill: args.fill, line: args.line,
+        pad_x: args.pad_x, pad_bottom: args.pad_bottom, head: args.head,
+      })
+      return {
+        text: 'lane #' + result.lane + ' ' + JSON.stringify(result.bounds) + ' around '
+          + result.nodes.length + ' node(s), pushed behind them',
+      }
+    }),
+
+    normalize: withDeps(async (args, { call }) => {
+      const state = await call({ action: 'normalize', path: args.path, page: args.page })
+      return { text: noticeState(state) }
+    }),
+
+    validate: withDeps(async (args, { call }) => {
+      const result = await call({ action: 'validate', path: args.path, page: args.page })
+      const lines = result.issues.map((item) =>
+        [item.level.toUpperCase(), item.code, '#' + item.shape, item.message].join(' | '))
+      const head = [
+        'errors ' + result.counts.error + ', warnings ' + result.counts.warn
+          + ', info ' + result.counts.info,
+        'shapes ' + result.shapes + ', connectors ' + result.connectors,
+      ]
+      return { text: head.concat(lines).join('\n') }
+    }),
+
+    audit_full: withDeps(async (args, { call }) => {
+      const result = await call({ action: 'audit_full', path: args.path, page: args.page })
+      const rows = (result.issues || []).map((item) =>
+        [item.level.toUpperCase(), item.code, '#' + item.shape, item.message].join(' | '))
+      const head = ['errors ' + result.counts.error + ', warnings ' + result.counts.warn,
+        'checks: ' + (result.checks || []).join(', ')]
+      const body = head.concat(rows).join('\n')
+      if (args.strict && (result.counts.error > 0 || result.counts.warn > 0)) {
+        throw new Error('strict audit failed\n' + body)
+      }
+      return { text: body }
+    }),
+
+    kinds: withDeps(async (_args, { call }) => {
+      const result = await call({ action: 'kinds' })
+      return { text: (result.kinds || []).map((k) => String(k)).join('\n') }
+    }),
+
+    capabilities: withDeps(async (_args, { call }) => {
+      const result = await call({ action: 'capabilities' })
+      return {
+        text: ['actions: ' + (result.actions || []).join(', '),
+          'kinds: ' + (result.kinds || []).join(', ')].join('\n'),
+      }
+    }),
+
+    guide: withDeps(async (args, { call }) => {
+      const guide = await call({ action: 'guide', which: args.which })
+      return { text: JSON.stringify(guide, null, 2) }
+    }),
+
+    shape_list: withDeps(async (_args, { call }) => {
+      const result = await call({ action: 'shape_list' })
+      const rows = (result.shapes || []).map((item) => item.name
+        + (item.builtin ? ' [builtin]' : ' [user]') + (item.label ? ' - ' + item.label : ''))
+      return {
+        text: ['shape library: ' + result.count + ' shape(s)',
+          'built-in: ' + result.builtin, 'user: ' + result.user, ''].concat(rows).join('\n'),
+      }
+    }),
+
+    shape_save: withDeps(async (args, { call }) => {
+      const result = await call({ action: 'shape_save', name: args.name, shape: args.shape })
+      return {
+        text: 'cached shape "' + result.name + '" (rendered=' + result.rendered + ') at ' + result.path,
+      }
+    }),
+
+    stencils: withDeps(async (args, { call }) => {
+      const result = await call({ action: 'stencils', file: args.file || args.path })
+      return { text: (result.masters || []).map((m) => '#' + m.id + ' ' + m.name).join('\n') }
+    }),
+
+    stencil_info: withDeps(async (args, { call }) => {
+      const result = await call({
+        action: 'stencil_info', file: args.file, master: args.master,
+      })
+      const rows = (result.masters || []).map((m) => [
+        '#' + m.id, m.name, m.prompt || '-',
+        (m.width || '?') + 'x' + (m.height || '?') + 'in',
+        m.shapes + ' shape(s)', m.text || '',
+      ].join(' | '))
+      return { text: [result.file, result.count + ' master(s)'].concat(rows).join('\n') }
+    }),
+
+    stencil_sheet: withDeps(async (args, { call }) => {
+      const result = await call({ action: 'stencil_sheet', file: args.file, out: args.out })
+      return { text: 'contact sheet: ' + result.out + ' (' + result.masters + ' masters)' }
+    }),
+
+    stencil_add: withDeps(async (args, { call }) => {
+      const state = await call({
+        action: 'stencil_add', path: args.path, page: args.page,
+        stencil: args.stencil, master: args.master, x: args.x ?? 1, y: args.y ?? 1,
+      })
+      return { text: noticeState(state) }
+    }),
+
+    snapshot: withDeps(async (args, { call }) => {
+      const result = await call({
+        action: 'snapshot', path: args.path, page: args.page,
+        all: args.all === true, dpi: args.dpi, out: args.out,
+        review: args.review === true,
+      })
+      const lines = ['rendered ' + result.pages + ' page(s):'].concat(result.files)
+      if (result.report) {
+        lines.push('', 'review: errors ' + result.report.counts.error
+          + ', warnings ' + result.report.counts.warn
+          + (result.report.counts.info ? ', info ' + result.report.counts.info : ''))
+        for (const item of result.report.issues) {
+          lines.push([item.level.toUpperCase(), item.code, '#' + item.shape, item.message].join(' | '))
+        }
+      }
+      return { text: lines.join('\n') }
+    }),
+
+    export: withDeps(async (args, { call }) => {
+      const result = await call({
+        action: 'export', path: args.path, page: args.page,
+        format: args.format ?? 'svg', out: args.out, dpi: args.dpi,
+      })
+      return { text: 'exported: ' + result.out }
+    }),
+
+    undo: withDeps(async (args, { call }) => {
+      const state = await call({ action: 'undo', path: args.path, page: args.page })
+      return { text: noticeState(state) }
+    }),
+
+    redo: withDeps(async (args, { call }) => {
+      const state = await call({ action: 'redo', path: args.path, page: args.page })
+      return { text: noticeState(state) }
+    }),
+  }
 }
 
 function registerAgentTool(ctx, config) {
   const tools = ctx.get('tools') ?? ctx.tools
   if (typeof tools?.register !== 'function') return undefined
+  const handlers = buildHandlers(ctx, config)
   return tools.register({
     name: 'visio',
-    description:
-      'Read, edit, create and export Microsoft Visio .vsdx drawings without Visio installed. '
-      + 'Coordinates are inches with the origin at the bottom-left of the page; shape bbox = {x,y,w,h}. '
-      + 'open returns pages, page size, shape ids with text and bbox, and a text outline. '
-      + 'Edits save in place and keep a bounded .bak-<timestamp> history. '
-      + 'The DSH Visio panel in the sidebar edits the same files visually.',
-    parameters: TOOL_PARAMETERS,
+    description: ACTION_HELP,
+    parameters: toolParameters(Object.keys(handlers)),
     output: {
       schema: {
         type: 'object',
@@ -567,245 +1068,18 @@ function registerAgentTool(ctx, config) {
       render: (_args, value) => [{ type: 'text', text: String(value?.text ?? '') }],
     },
     async execute(args) {
-      const action = args?.action
+      const action = typeof args?.action === 'string' ? args.action : ''
+      const handler = handlers[action]
+      if (!handler) {
+        throw new Error('visio: unknown action "' + action + '". Available: '
+          + Object.keys(handlers).join(', '))
+      }
       try {
-        if (action === 'open') {
-          const state = await runBridge(config, { action: 'open', path: args.path, page: args.page })
-          const outline = await runBridge(config, { action: 'text', path: args.path })
-          return { text: `${formatState(state)}\n\n${outline.text}` }
-        }
-        if (action === 'text') {
-          const result = await runBridge(config, { action: 'text', path: args.path })
-          return { text: result.text }
-        }
-        if (action === 'get_shape') {
-          const result = await runBridge(config, {
-            action: 'get_shape',
-            path: args.path,
-            page: args.page,
-            shape_id: args.shape_id,
-          })
-          return { text: JSON.stringify(result.detail, null, 2) }
-        }
-        if (action === 'list') {
-          const result = await runBridge(config, { action: 'list', dir: args.dir ?? defaultFolder(ctx, config) })
-          const files = result.files ?? []
-          return {
-            text: files.length
-              ? files.map((file) => `${file.name}\t${file.size} bytes\t${file.path}`).join('\n')
-              : `no .vsdx/.vsdm files in ${result.dir}`,
-          }
-        }
-        if (action === 'create') {
-          const result = await runBridge(config, {
-            action: 'create',
-            dir: args.dir ?? defaultFolder(ctx, config),
-            name: args.title || 'drawing',
-            title: args.title,
-            width: args.width,
-            height: args.height,
-          })
-          return { text: `${formatState(result)}\n\ncreated: ${result.path}` }
-        }
-        if (action === 'set_text' || action === 'set_cell' || action === 'set_prop' || action === 'delete') {
-          const bridgeAction = action === 'set_cell' ? 'set_cells' : action
-          const payload = { action: bridgeAction, path: args.path, page: args.page, shape_id: args.shape_id }
-          if (action === 'set_text') payload.text = args.text
-          if (action === 'set_cell') {
-            payload.cells = { [String(args.cell)]: String(args.value ?? '') }
-          }
-          if (action === 'set_prop') {
-            payload.name = args.name
-            payload.value = String(args.value ?? '')
-          }
-          const state = await runBridge(config, payload)
-          return { text: `${state.notice}\n\n${formatState(state)}` }
-        }
-        if (action === 'add_shape') {
-          const state = await runBridge(config, {
-            action: 'add_shape',
-            path: args.path,
-            page: args.page,
-            kind: args.kind ?? 'rect',
-            x: args.x ?? 1,
-            y: args.y ?? 1,
-            w: args.w ?? 1.6,
-            h: args.h ?? 0.8,
-            text: args.text ?? '',
-            // Styling used to exist only on add_freeform, so every coloured node
-            // had to go through the escape hatch.  One shape API, not two.
-            fill: args.fill, line: args.line,
-            font_color: args.font_color, font_size: args.font_size, bold: args.bold,
-            line_pattern: args.line_pattern, line_width: args.line_width,
-            angle: args.angle, text_bg: args.text_bg,
-          })
-          return { text: `${state.notice}\n\n${formatState(state)}` }
-        }
-        if (action === 'connect') {
-          const state = await runBridge(config, {
-            action: 'connect',
-            path: args.path,
-            page: args.page,
-            from: args.from,
-            to: args.to,
-            label: args.label ?? args.text ?? '',
-            from_port: args.from_port,
-            to_port: args.to_port,
-          })
-          return { text: `${state.notice}\n\n${formatState(state)}` }
-        }
-        if (action === 'normalize') {
-          const state = await runBridge(config, { action: 'normalize', path: args.path, page: args.page })
-          return { text: `${state?.notice ?? 'units normalised'}
-${formatState(state)}`.trim() }
-        }
-        if (action === 'validate') {
-          const result = await runBridge(config, { action: 'validate', path: args.path, page: args.page })
-          const lines = result.issues.map((item) =>
-            [item.level.toUpperCase(), item.code, '#' + item.shape, item.message].join(' | '))
-          const head = [
-            'errors ' + result.counts.error + ', warnings ' + result.counts.warn + ', info ' + result.counts.info,
-            'shapes ' + result.shapes + ', connectors ' + result.connectors,
-          ]
-          return { text: head.concat(lines).join(String.fromCharCode(10)) }
-        }
-        if (action === 'kinds') {
-          const result = await runBridge(config, { action: 'kinds' })
-          const rows = (result.kinds || []).map((k) => String(k))
-          return { text: rows.join(String.fromCharCode(10)) }
-        }
-        if (action === 'capabilities') {
-          const result = await runBridge(config, { action: 'capabilities' })
-          const rows = [
-            'actions: ' + (result.actions || []).join(', '),
-            'kinds: ' + (result.kinds || []).join(', '),
-          ]
-          return { text: rows.join(String.fromCharCode(10)) }
-        }
-        if (action === 'stencil_info') {
-          const result = await runBridge(config, { action: 'stencil_info', file: args.file, master: args.master })
-          const rows = (result.masters || []).map((m) => [
-            '#' + m.id, m.name, m.prompt || '-', (m.width || '?') + 'x' + (m.height || '?') + 'in',
-            m.shapes + ' shape(s)', m.text || '',
-          ].join(' | '))
-          return { text: [result.file, result.count + ' master(s)'].concat(rows).join(String.fromCharCode(10)) }
-        }
-        if (action === 'stencil_sheet') {
-          const result = await runBridge(config, { action: 'stencil_sheet', file: args.file, out: args.out })
-          return { text: 'contact sheet: ' + result.out + ' (' + result.masters + ' masters)' }
-        }
-        if (action === 'snapshot') {
-          const result = await runBridge(config, {
-            action: 'snapshot', path: args.path, page: args.page, all: args.all === true, dpi: args.dpi, out: args.out,
-          })
-          return { text: ['rendered ' + result.pages + ' page(s):'].concat(result.files).join(String.fromCharCode(10)) }
-        }
-        if (action === 'stencils') {
-          const result = await runBridge(config, { action: 'stencils', file: args.file || args.path })
-          const rows = (result.masters || []).map((m) => '#' + m.id + ' ' + m.name)
-          return { text: rows.join(String.fromCharCode(10)) }
-        }
-        if (action === 'guide') {
-          const g = await runBridge(config, { action: 'guide', which: args.which })
-          return { text: JSON.stringify(g, null, 2) }
-        }
-        if (action === 'shape_list') {
-          const r = await runBridge(config, { action: 'shape_list' })
-          const rows = (r.shapes || []).map((x) => x.name + (x.builtin ? ' [builtin]' : ' [user]') + (x.label ? ' — ' + x.label : ''))
-          return { text: ['shape library: ' + r.count + ' shape(s)', 'built-in: ' + r.builtin, 'user: ' + r.user, ''].concat(rows).join(String.fromCharCode(10)) }
-        }
-        if (action === 'shape_save') {
-          const r = await runBridge(config, { action: 'shape_save', name: args.name, shape: args.shape })
-          return { text: 'cached shape "' + r.name + '" (rendered=' + r.rendered + ') at ' + r.path }
-        }
-        if (action === 'audit_full' || action === 'validate') {
-          const r = await runBridge(config, { action, path: args.path, page: args.page })
-          const rows = (r.issues || []).map((i) => [i.level.toUpperCase(), i.code, '#' + i.shape, i.message].join(' | '))
-          const head = ['errors ' + r.counts.error + ', warnings ' + r.counts.warn,
-            action === 'audit_full' ? 'checks: ' + (r.checks || []).join(', ') : '']
-          return { text: head.filter(Boolean).concat(rows).join(String.fromCharCode(10)) }
-        }
-        if (action === 'connect_styled') {
-          const r = await runBridge(config, { action: 'connect_styled', path: args.path, page: args.page,
-            from: args.from, to: args.to, label: args.label ?? args.text ?? '',
-            points: args.points, line_color: args.line_color, line_pattern: args.line_pattern,
-            line_width: args.line_width,
-            line_width: args.line_width, from_port: args.from_port, to_port: args.to_port,
-            orthogonal: args.orthogonal, within: args.within, label_pos: args.label_pos,
-            allow_off_midpoint: args.allow_off_midpoint, allow_cross_shapes: args.allow_cross_shapes,
-            user_approved: args.user_approved })
-          return { text: 'connector #' + r.connector + ' (' + r.points + ' waypoints, ' + r.line_color + (r.dashed ? ', dashed' : '') + ')' }
-        }
-        if (action === 'add_anchor') {
-          const r = await runBridge(config, { action: 'add_anchor', path: args.path, page: args.page,
-            shape_id: args.shape_id, side: args.side, gap: args.gap })
-          return { text: 'anchor #' + r.anchor + ' on #' + r.shape + ' (' + r.side + ') at '
-            + r.x.toFixed(3) + ', ' + r.y.toFixed(3) }
-        }
-        if (action === 'swimlane') {
-          const r = await runBridge(config, { action: 'swimlane', path: args.path, page: args.page,
-            nodes: args.nodes, title: args.title, owner: args.owner, fill: args.fill, line: args.line,
-            pad_x: args.pad_x, pad_bottom: args.pad_bottom, head: args.head })
-          return { text: 'lane #' + r.lane + ' ' + JSON.stringify(r.bounds) + ' around '
-            + r.nodes.length + ' node(s), pushed behind them' }
-        }
-        if (action === 'move_endpoint') {
-          const state = await runBridge(config, { action: 'move_endpoint', path: args.path, page: args.page,
-            shape_id: args.shape_id, end: args.end, x: args.x, y: args.y })
-          return { text: `${state.notice}\n\n${formatState(state)}` }
-        }
-        if (action === 'set_end_direction') {
-          const state = await runBridge(config, { action: 'set_end_direction', path: args.path, page: args.page,
-            shape_id: args.shape_id, end: args.end, direction: args.direction })
-          return { text: `${state.notice}\n\n${formatState(state)}` }
-        }
-        if (action === 'align') {
-          const r = await runBridge(config, { action: 'align', path: args.path, page: args.page, shape_ids: args.shape_ids, mode: args.mode })
-          return { text: 'aligned ' + r.moved.length + ' shape(s) by ' + r.mode + ': ' + JSON.stringify(r.moved) }
-        }
-        if (action === 'add_freeform') {
-          const state = await runBridge(config, { action: 'add_shape', path: args.path, page: args.page,
-            x: args.x, y: args.y, w: args.w, h: args.h, text: args.text, kind: args.kind || 'rect',
-            geometry: args.geometry, fill: args.fill, line: args.line, font_color: args.font_color,
-            font_size: args.font_size, bold: args.bold, line_pattern: args.line_pattern,
-            line_width: args.line_width, angle: args.angle })
-          return { text: state.notice + String.fromCharCode(10) + String.fromCharCode(10) + formatState(state) }
-        }
-        if (action === 'stencil_add') {
-          const state = await runBridge(config, {
-            action: 'stencil_add', path: args.path, page: args.page,
-            stencil: args.stencil, master: args.master, x: args.x ?? 1, y: args.y ?? 1,
-          })
-          return { text: (state.notice || 'master inserted') + String.fromCharCode(10) + String.fromCharCode(10) + formatState(state) }
-        }
-        if (action === 'move') {
-          const state = await runBridge(config, {
-            action: 'move', path: args.path, page: args.page, shape_id: args.shape_id,
-            x: args.x, y: args.y, w: args.w, h: args.h,
-          })
-          return { text: `${state.notice}
-
-${formatState(state)}` }
-        }
-        if (action === 'undo' || action === 'redo') {
-          const state = await runBridge(config, { action, path: args.path, page: args.page })
-          return { text: `${state.notice ?? action}
-
-${formatState(state)}` }
-        }
-        if (action === 'export') {
-          const result = await runBridge(config, {
-            action: 'export',
-            path: args.path,
-            page: args.page,
-            format: args.format ?? 'svg',
-            out: args.out,
-          })
-          return { text: `exported: ${result.out}` }
-        }
-        return { text: 'Unknown action.' }
+        return await handler(args)
       } catch (error) {
-        return { text: `visio failed: ${messageOf(error)}` }
+        // A failed drawing edit must fail the tool call: returning "visio failed: ..."
+        // as ordinary output made the model believe the edit had been applied.
+        throw new Error('visio ' + action + ' failed: ' + messageOf(error))
       }
     },
   })
@@ -834,6 +1108,8 @@ export function apply(ctx, config = {}) {
   ctx.inject(['webServer'], (hostCtx) => {
     const webServer = hostCtx.webServer
     if (typeof webServer?.register !== 'function') return
+    const stops = new PathStops()
+    stops.add(defaultFolder(ctx, config))
     const routes = [
       route(ctx, `${ROUTE_PREFIX}/config`, ['GET'], async ({ response }) => {
         const folder = defaultFolder(ctx, config)
@@ -868,7 +1144,9 @@ export function apply(ctx, config = {}) {
         if (body.path !== undefined && typeof body.path === 'string' && !isAbsolute(body.path)) {
           body.path = resolve(defaultFolder(ctx, config), body.path)
         }
+        guardRequest(stops, body, ctx, config)
         const result = await runBridge(config, body)
+        rememberPaths(stops, result)
         json(response, 200, result)
       }),
     ]
@@ -879,4 +1157,6 @@ export function apply(ctx, config = {}) {
 }
 
 export const internals = {
-  engineFingerprint, runBridge, formatState, pythonOf, defaultFolder, disposePools }
+  engineFingerprint, runBridge, formatState, pythonOf, defaultFolder, disposePools,
+  toolParameters, buildHandlers, PathStops, guardRequest, rememberPaths, TOOL_PARAMS,
+  registerTool: registerAgentTool }

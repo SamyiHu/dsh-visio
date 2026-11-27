@@ -750,23 +750,41 @@ def action_normalize(req):
                        notice="已修复 %d 个单元格的单位标注" % report["cells"], saved=True)
 
 
+def export_out(req, path: str, want: str) -> str:
+    """Resolve an export target and refuse anything that is not a *want* file.
+
+    The agent surface has no HTTP path guard in front of it, so the engine is the
+    last line: an out that still ends in .vsdx would replace the drawing itself
+    with an SVG, which is a silent, unrecoverable way to lose the document.
+    """
+    out = text(req.get("out"), "out", 1000).strip()
+    if not out:
+        return os.path.splitext(path)[0] + want
+    out = os.path.abspath(out if os.path.isabs(out) else os.path.join(os.path.dirname(path), out))
+    if not out.lower().endswith(want):
+        raise BadRequest("out must end with %s" % want)
+    if os.path.abspath(out) == os.path.abspath(path):
+        raise BadRequest("out must not be the drawing itself")
+    return out
+
+
 def action_export(req):
     path = drawing_path(req.get("path"))
     doc = load_doc(path)
     page = page_of(req.get("page"), doc.pages)
     fmt = (text(req.get("format"), "format", 10) or "svg").lower()
-    out = text(req.get("out"), "out", 1000).strip()
+    dpi = max(30.0, min(400.0, number(req.get("dpi") or 110, "dpi")))
     if fmt == "svg":
-        out = out or os.path.splitext(path)[0] + ".svg"
+        out = export_out(req, path, ".svg")
         doc.save_svg(out, page, show_ids=bool(req.get("show_ids")))
     elif fmt == "png":
         # Render the same SVG the panel shows: the older vsdx_png routine drew a
         # bounding box for custom Geometry, so freeform silhouettes (decision
         # gates, arrow heads, composed shapes) exported as plain rectangles.
         import svg_raster
-        out = out or os.path.splitext(path)[0] + ".png"
+        out = export_out(req, path, ".png")
         svg = doc.to_svg(page, interactive=False, background=True)
-        svg_raster.rasterize(svg, scale=float(req.get("dpi") or 110)).save(out)
+        svg_raster.rasterize(svg, scale=dpi).save(out)
     else:
         raise BadRequest("format must be svg or png")
     return {"ok": True, "out": out}
@@ -1003,10 +1021,12 @@ def action_snapshot(req):
     stem = os.path.splitext(os.path.basename(path))[0]
     import svg_raster
     files = []
-    dpi = float(req.get("dpi") or 110)
-    for number in pages:
-        target = os.path.join(out_dir, "%s-p%d.png" % (stem, number))
-        svg = doc.to_svg(number, interactive=False, background=False)
+    dpi = max(30.0, min(400.0, number(req.get("dpi") or 110, "dpi")))
+    # the loop variable used to be called "number", which shadowed the module-level
+    # number() validator and turned any later validation call into UnboundLocalError
+    for page_no in pages:
+        target = os.path.join(out_dir, "%s-p%d.png" % (stem, page_no))
+        svg = doc.to_svg(page_no, interactive=False, background=False)
         svg_raster.rasterize(svg, scale=dpi).save(target)
         files.append(target)
     result = {'ok': True, 'path': path, 'pages': len(pages), 'files': files}

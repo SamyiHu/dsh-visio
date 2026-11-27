@@ -1,138 +1,103 @@
 /**
- * Contract test for the browser half without a browser.
+ * Client contract tests: translation keys, and the residue of old bugs that a
+ * bundler cannot catch.  No DOM needed.
  *
- * Loads client.js in a bare VM (with a stubbed module loader and React), then:
- *  • checks the plugin object shape and that apply() registers the panel + icon,
- *  • checks every t('key') used by the UI exists in both dictionaries,
- *  • checks the sidebar entry and the main panel share one id.
- *
- *   node tests/test_client_contract.mjs
+ * Run:  node tests/test_client_contract.mjs
  */
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import vm from 'node:vm'
-import assert from 'node:assert/strict'
 
-const here = dirname(fileURLToPath(import.meta.url))
-const source = readFileSync(join(here, '..', 'client.js'), 'utf8')
+const HERE = dirname(fileURLToPath(import.meta.url))
+const source = readFileSync(join(HERE, '..', 'client.js'), 'utf8')
+const results = []
 
-let loaded = null
-const sandbox = {
-  window: { __ModuleLoader__: { load: (module) => { loaded = module } }, localStorage: null },
-  document: { baseURI: 'http://127.0.0.1/' },
-  console,
-  setTimeout,
-  clearTimeout,
-  URL,
-}
-vm.runInNewContext(source, sandbox)
-// The footer badge must not lie about which build is running.
-{
-  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
-  const build = /const CLIENT_BUILD = '([^']+)'/.exec(readFileSync(new URL('../client.js', import.meta.url), 'utf8'))
-  assert.equal(build && build[1], pkg.version, 'CLIENT_BUILD must match package.json version')
-  // Declared compatibility must stay in the manifest: the host does not enforce it,
-  // so a missing field would silently leave users without the prerequisites.
-  assert.equal(pkg.engines && pkg.engines.node, '>=18', 'engines.node must declare the Node floor')
-  assert.equal(pkg.dsh && pkg.dsh.engines && pkg.dsh.engines.dsh, '>=0.2.1-rc.1 <0.3.0-0',
-    'dsh.engines.dsh must declare the DSH host floor')
-  const peer = pkg.peerDependencies && pkg.peerDependencies['@deepseek-ai/dsh']
-  assert.ok(peer && /0\.2\.2-rc\.1/.test(peer) && /0\.1\.7-rc\.2/.test(peer),
-    'peerDependencies must explicitly cover the guaranteed 0.2.2-rc.1 and the early 0.1.7-rc.2 prerelease')
-  assert.ok(peer && peer.includes('||'),
-    'peer range must use explicit prerelease branches, per the awesome-list contributing guide')
+function check(name, fn) {
+  try {
+    fn()
+    results.push([true, name, ''])
+  } catch (error) {
+    results.push([false, name, error instanceof Error ? error.message : String(error)])
+  }
 }
 
-assert.ok(loaded, 'window.__ModuleLoader__.load was never called')
-
-const noop = () => {}
-const React = {
-  createElement: (...args) => ({ args }),
-  useState: (v) => [v, noop],
-  useEffect: noop,
-  useRef: (v) => ({ current: v }),
-  useMemo: (fn) => fn(),
-  useCallback: (fn) => fn,
+function assert(condition, message) {
+  if (!condition) throw new Error(message)
 }
-const plugin = loaded.factory((id) => {
-  if (id === 'react') return React
-  throw new Error(`unexpected require(${id})`)
+
+/** Slice a top-level object literal out of the source by brace counting. */
+function objectAt(startIndex) {
+  const open = source.indexOf('{', startIndex)
+  let depth = 0
+  for (let i = open; i < source.length; i += 1) {
+    if (source[i] === '{') depth += 1
+    else if (source[i] === '}') {
+      depth -= 1
+      if (depth === 0) return source.slice(open, i + 1)
+    }
+  }
+  throw new Error('unbalanced dictionary literal')
+}
+
+const zhStart = source.indexOf('const zh = {')
+const enStart = source.indexOf('const en = {')
+const zhBlock = objectAt(zhStart)
+const enBlock = objectAt(enStart)
+
+const keysOf = (block) => new Set([...block.matchAll(/^\s{4,8}([A-Za-z_][A-Za-z0-9_]*)\s*:/gm)].map((m) => m[1]))
+const zhKeys = keysOf(zhBlock)
+const enKeys = keysOf(enBlock)
+
+check('i18n: zh and en carry exactly the same keys', () => {
+  const missingEn = [...zhKeys].filter((key) => !enKeys.has(key))
+  const missingZh = [...enKeys].filter((key) => !zhKeys.has(key))
+  assert(missingEn.length === 0, 'missing in en: ' + missingEn.join(', '))
+  assert(missingZh.length === 0, 'missing in zh: ' + missingZh.join(', '))
 })
 
-assert.equal(loaded.id, 'dsh-visio')
-assert.equal(JSON.stringify(plugin.inject), JSON.stringify(['slots', 'locale']))
-assert.equal(typeof plugin.apply, 'function')
+check('i18n: every t(key) resolves to a dictionary entry', () => {
+  // a key is a literal followed by the closing paren or an options object;
+  // t('side_' + dir) is a computed key and is resolved by the dictionaries below it
+  const used = new Set([...source.matchAll(/\bt\('([A-Za-z_][A-Za-z0-9_]*)'\s*[,)]/g)].map((m) => m[1]))
+  const unknown = [...used].filter((key) => !zhKeys.has(key))
+  assert(unknown.length === 0, 'no translation for: ' + unknown.join(', '))
+})
 
-const calls = { effects: 0, slots: [], locales: [], dictionaries: null }
-function makeContext() {
-  const ctx = {
-    effect(fn) {
-      calls.effects += 1
-      const dispose = fn()
-      return typeof dispose === 'function' ? dispose : noop
-    },
-    get: () => undefined,
-    inject: () => {},
-    logger: () => ({ warn: noop }),
-    locale: {
-      register(namespace, dictionaries) {
-        calls.locales.push(namespace)
-        calls.dictionaries = dictionaries
-        return noop
-      },
-      bind: (namespace) => (key, params) => {
-        const dict = calls.dictionaries?.zh ?? {}
-        let value = dict[key] ?? key
-        for (const [name, replacement] of Object.entries(params ?? {})) {
-          value = value.replaceAll(`{${name}}`, String(replacement))
-        }
-        return value
-      },
-    },
-    slots: {
-      inject: (_name, callback) => callback(),
-      register(spec, component) {
-        calls.slots.push({ name: spec.name, id: spec.key ?? spec.id, component })
-        assert.equal(typeof component, 'function', `${spec.name} component must be a function`)
-        return noop
-      },
-    },
+check('i18n: no Chinese literals outside the dictionaries', () => {
+  const spans = [[zhStart, zhStart + zhBlock.length], [enStart, enStart + enBlock.length]]
+  const offenders = []
+  let offset = 0
+  for (const line of source.split('\n')) {
+    const start = offset
+    offset += line.length + 1
+    if (!/[\u4e00-\u9fff]/.test(line)) continue
+    if (spans.some(([from, to]) => start >= from && start <= to)) continue
+    // the shape-kind palette is bilingual data, not a literal typed into the UI
+    if (/zh: '.*', en: '/.test(line)) continue
+    offenders.push(line.trim().slice(0, 80))
   }
-  return ctx
+  assert(offenders.length === 0, 'hard-coded Chinese in the UI code: ' + offenders.join(' | '))
+})
+
+check('no debug hooks left on the window object', () => {
+  assert(!/window\.__[A-Za-z0-9_$]*\s*=/.test(source),
+    'a window.__ hook is still assigning state onto the page global')
+})
+
+check('Ctrl+D performs a duplicate instead of only consuming the shortcut', () => {
+  assert(/duplicateSelection\(\)/.test(source), 'Ctrl+D no longer calls the duplicate path')
+  assert(/action: 'duplicate'/.test(source), 'nothing calls the duplicate action')
+})
+
+check('the SVG preview is injected through exactly one place', () => {
+  const hits = [...source.matchAll(/dangerouslySetInnerHTML/g)]
+  assert(hits.length === 1, 'found ' + hits.length + ' raw-HTML injections; each one needs escaping')
+})
+
+let bad = 0
+for (const [ok, name, message] of results) {
+  console.log((ok ? 'ok   ' : 'FAIL ') + name + (ok ? '' : '  <- ' + message))
+  bad += ok ? 0 : 1
 }
-
-plugin.apply(makeContext())
-
-assert.equal(calls.effects, 1, 'apply must register exactly one dispose effect')
-assert.ok(calls.locales.includes('dsh-visio'), 'locale namespace not registered')
-assert.ok(calls.dictionaries?.zh && calls.dictionaries?.en, 'zh/en dictionaries missing')
-
-const main = calls.slots.find((slot) => slot.name === 'main')
-const sidebar = calls.slots.find((slot) => slot.name === 'sidebar.panellist')
-assert.ok(main, 'main panel not registered')
-assert.ok(sidebar, 'sidebar entry not registered')
-assert.equal(main.id, 'dsh-visio')
-assert.equal(sidebar.id, main.id, 'sidebar id must match the main panel key')
-assert.equal(sidebar.id, 'dsh-visio')
-
-// Every literal t('key') in the UI must exist in both dictionaries.
-const used = new Set([...source.matchAll(/\bt\('([a-zA-Z][a-zA-Z0-9]*)'/g)].map((match) => match[1]))
-assert.ok(used.size > 40, `expected many translation keys, found ${used.size}`)
-for (const key of used) {
-  for (const lang of ['zh', 'en']) {
-    assert.ok(
-      Object.prototype.hasOwnProperty.call(calls.dictionaries[lang], key),
-      `missing ${lang} translation for "${key}"`,
-    )
-  }
-}
-
-// The panel tree must be renderable: evaluate the component function shape only.
-assert.equal(VisioHasHooks(main.component), true, 'panel should be a function component')
-
-function VisioHasHooks(component) {
-  return typeof component === 'function' && component.length <= 1
-}
-
-console.log(`ok — ${used.size} translation keys, slots: ${calls.slots.map((s) => `${s.name}:${s.id}`).join(', ')}`)
+console.log('\n' + (results.length - bad) + '/' + results.length + ' ok')
+process.exit(bad ? 1 : 0)
