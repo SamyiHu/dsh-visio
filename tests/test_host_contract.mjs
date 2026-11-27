@@ -28,6 +28,11 @@ function assert(condition, message) {
   if (!condition) throw new Error(message)
 }
 
+/** Escape a literal path for embedding in a RegExp. */
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 const ctx = { get: () => undefined }
 const config = {}
 const handlers = internals.buildHandlers(ctx, config)
@@ -141,23 +146,27 @@ await check('fingerprint: every engine module is watched', () => {
 
 await check('path guard: writes stay inside the folders the user opened', () => {
   const stops = new internals.PathStops()
-  stops.add('C:/work/drawings')
-  assert(stops.covers('C:/work/drawings/a.vsdx'), 'a file in the opened folder must be allowed')
-  assert(stops.covers('C:/work/drawings/sub/a.vsdx'), 'a subfolder must be allowed')
-  assert(!stops.covers('C:/work/other/a.vsdx'), 'a sibling folder must not be allowed')
-  assert(!stops.covers('C:/work/drawings/../other/a.vsdx'), '.. must not escape the folder')
-  assert(!stops.covers('C:/Windows/System32/x.svg'), 'an unrelated folder must not be allowed')
+  const folder = join(ROOT, '_guardwork')
+  const outside = join(ROOT, '_guardoutside')
+  stops.add(folder)
+  assert(stops.covers(join(folder, 'a.vsdx')), 'a file in the opened folder must be allowed')
+  assert(stops.covers(join(folder, 'sub', 'a.vsdx')), 'a subfolder must be allowed')
+  assert(!stops.covers(join(outside, 'a.vsdx')), 'a sibling folder must not be allowed')
+  assert(!stops.covers(join(folder, '..', '_guardoutside', 'a.vsdx')), '.. must not escape the folder')
+  assert(!stops.covers(join(outside, 'System32', 'x.svg')), 'an unrelated folder must not be allowed')
 })
 
 await check('path guard: export refuses another suffix and an outside folder', () => {
   const stops = new internals.PathStops()
-  stops.add('C:/work/drawings')
+  const folder = join(ROOT, '_guardwork')
+  const outside = join(ROOT, '_guardoutside')
+  stops.add(folder)
   const bad = [
-    { action: 'export', path: 'C:/work/drawings/a.vsdx', format: 'svg', out: 'C:/work/drawings/a.txt' },
-    { action: 'export', path: 'C:/work/drawings/a.vsdx', format: 'png', out: 'C:/work/drawings/a.svg' },
-    { action: 'export', path: 'C:/work/drawings/a.vsdx', format: 'svg', out: 'C:/Windows/x.svg' },
-    { action: 'create', dir: 'C:/Windows/System32', name: 'x' },
-    { action: 'snapshot', path: 'C:/work/drawings/a.vsdx', out: 'C:/Windows' },
+    { action: 'export', path: join(folder, 'a.vsdx'), format: 'svg', out: join(folder, 'a.txt') },
+    { action: 'export', path: join(folder, 'a.vsdx'), format: 'png', out: join(folder, 'a.svg') },
+    { action: 'export', path: join(folder, 'a.vsdx'), format: 'svg', out: join(outside, 'x.svg') },
+    { action: 'create', dir: join(outside, 'System32'), name: 'x' },
+    { action: 'snapshot', path: join(folder, 'a.vsdx'), out: outside },
   ]
   for (const body of bad) {
     let threw = false
@@ -168,26 +177,27 @@ await check('path guard: export refuses another suffix and an outside folder', (
     }
     assert(threw, 'allowed: ' + JSON.stringify(body))
   }
-  const ok = { action: 'export', path: 'C:/work/drawings/a.vsdx', format: 'svg', out: 'preview.svg' }
+  const ok = { action: 'export', path: join(folder, 'a.vsdx'), format: 'svg', out: 'preview.svg' }
   internals.guardRequest(stops, ok, ctx, config)
-  assert(/[/\\]work[/\\]drawings[/\\]preview\.svg$/i.test(ok.out),
+  assert(new RegExp(escapeRegExp(folder) + '[/\\\\]preview\\.svg$').test(ok.out),
     'a relative out must be anchored next to the drawing, got ' + ok.out)
 })
 
 await check('path guard: only a successful listing widens the write surface', () => {
   const stops = new internals.PathStops()
-  const listBody = { action: 'list', dir: 'C:/work/picked' }
+  const picked = join(ROOT, '_guardpicked')
+  const listBody = { action: 'list', dir: picked }
   internals.guardRequest(stops, listBody, ctx, config)
   let refused = false
   try {
-    internals.guardRequest(stops, { action: 'create', dir: 'C:/work/picked', name: 'fresh' }, ctx, config)
+    internals.guardRequest(stops, { action: 'create', dir: join(ROOT, '_guardother'), name: 'fresh' }, ctx, config)
   } catch {
     refused = true
   }
   assert(refused, 'an attempted (not yet successful) listing already unlocked the folder')
-  internals.rememberPaths(stops, { dir: 'C:/work/picked' })
-  internals.guardRequest(stops, { action: 'create', dir: 'C:/work/picked', name: 'fresh' }, ctx, config)
-  assert(stops.covers('C:/work/picked/fresh.vsdx'), 'create was refused after a successful listing')
+  internals.rememberPaths(stops, { dir: picked })
+  internals.guardRequest(stops, { action: 'create', dir: picked, name: 'fresh' }, ctx, config)
+  assert(stops.covers(join(picked, 'fresh.vsdx')), 'create was refused after a successful listing')
 })
 
 // ---- routes + real bridge round trip (carried over from the master suite) --
