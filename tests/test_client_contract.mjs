@@ -94,6 +94,30 @@ check('the SVG preview is injected through exactly one place', () => {
   assert(hits.length === 1, 'found ' + hits.length + ' raw-HTML injections; each one needs escaping')
 })
 
+// ---- build / manifest contract (carried over from the master-side suite) ---
+// The footer badge must not lie about which build is running, and the manifest
+// must keep declaring the compatibility floors the host does not enforce.
+check('CLIENT_BUILD matches package.json version', () => {
+  const pkg = JSON.parse(readFileSync(join(HERE, '..', 'package.json'), 'utf8'))
+  const build = /const CLIENT_BUILD = '([^']+)'/.exec(source)
+  assert(build && build[1] === pkg.version,
+    `CLIENT_BUILD=${build ? build[1] : '(missing)'} != package.json ${pkg.version}`)
+})
+
+check('package.json declares the compatibility floors', () => {
+  const pkg = JSON.parse(readFileSync(join(HERE, '..', 'package.json'), 'utf8'))
+  assert(pkg.engines && pkg.engines.node === '>=18', 'engines.node must declare the Node floor')
+  assert(pkg.engines && pkg.engines.dsh === '>=0.2.1-rc.1 <0.3.0-0',
+    'engines.dsh must declare the DSH host floor')
+  assert(pkg.dsh && pkg.dsh.engines && pkg.dsh.engines.dsh === '>=0.2.1-rc.1 <0.3.0-0',
+    'dsh.engines.dsh must declare the DSH host floor')
+  const peer = pkg.peerDependencies && pkg.peerDependencies['@deepseek-ai/dsh']
+  assert(peer && /0\.2\.2-rc\.1/.test(peer) && /0\.1\.7-rc\.2/.test(peer),
+    'peerDependencies must explicitly cover the guaranteed 0.2.2-rc.1 and the early 0.1.7-rc.2 prerelease')
+  assert(peer && peer.includes('||'),
+    'peer range must use explicit prerelease branches, per the awesome-list contributing guide')
+})
+
 let bad = 0
 for (const [ok, name, message] of results) {
   console.log((ok ? 'ok   ' : 'FAIL ') + name + (ok ? '' : '  <- ' + message))

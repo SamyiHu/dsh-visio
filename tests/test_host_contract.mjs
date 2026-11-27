@@ -1,14 +1,15 @@
 /**
  * Host contract tests: the tool schema, the action table, the /op path guard and
- * the bridge payloads.  No DSH host and no Python needed.
+ * the bridge payloads.  The last check registers the plugin's real routes and
+ * does one genuine round trip through the Python bridge (as the master suite did).
  *
- * Run:  node tests/test_host_contract.mjs
+ * Run:  node tests/test_host_contract.mjs   (needs Python on PATH for the route check)
  */
-import { readFileSync, readdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { internals } from '../index.js'
+import { apply, internals } from '../index.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = dirname(HERE)
@@ -187,6 +188,97 @@ await check('path guard: only a successful listing widens the write surface', ()
   internals.rememberPaths(stops, { dir: 'C:/work/picked' })
   internals.guardRequest(stops, { action: 'create', dir: 'C:/work/picked', name: 'fresh' }, ctx, config)
   assert(stops.covers('C:/work/picked/fresh.vsdx'), 'create was refused after a successful listing')
+})
+
+// ---- routes + real bridge round trip (carried over from the master suite) --
+// The panel talks to the host over these routes; nothing else in this suite
+// proves they exist and refuse cross-origin / malformed requests.
+await check('routes: config and op register, and op does a real bridge round trip', async () => {
+  const routes = []
+  const out = join(HERE, '_route_out')
+  rmSync(out, { recursive: true, force: true })
+  mkdirSync(out, { recursive: true })
+  const routeCtx = {
+    get(name) {
+      if (name === 'tools') return { register: () => () => {} }
+      if (name === 'workingDirectory') return { defaultDirectory: out }
+      return undefined
+    },
+    inject(deps, callback) {
+      assert(deps.includes('tools') || deps.includes('webServer'), `unexpected inject ${deps}`)
+      callback(routeCtx)
+    },
+    effect(fn) { const dispose = fn(); return typeof dispose === 'function' ? dispose : () => {} },
+    logger: () => ({ warn: () => {} }),
+    webServer: { register: (route) => { routes.push(route); return () => {} } },
+  }
+  apply(routeCtx, {})
+  const configRoute = routes.find((route) => route.path === '/dsh-visio/config')
+  const opRoute = routes.find((route) => route.path === '/dsh-visio/op')
+  assert(configRoute && opRoute, 'both routes must register')
+  assert(configRoute.kind === 'exact' && opRoute.kind === 'exact', 'routes must be exact-kind')
+
+  const fakeResponse = () => ({
+    status: 0, headers: {}, body: '',
+    writeHead(status, headers) { this.status = status; Object.assign(this.headers, headers ?? {}) },
+    end(body) { this.body = body ?? '' },
+  })
+  const invoke = async (route, request) => {
+    const response = fakeResponse()
+    await route.handler(request, response)
+    let parsed
+    try { parsed = JSON.parse(response.body) } catch { parsed = response.body }
+    return { status: response.status, body: parsed, headers: response.headers }
+  }
+  const post = (body, headers = {}) => ({
+    method: 'POST',
+    headers: { host: '127.0.0.1:60764', ...headers },
+    async *[Symbol.asyncIterator]() { yield Buffer.from(JSON.stringify(body)) },
+  })
+
+  const configResult = await invoke(configRoute, { method: 'GET', headers: {} })
+  assert(configResult.status === 200, 'config status ' + configResult.status)
+  assert(configResult.body.ok === true, 'config must report ok')
+  assert(configResult.body.defaultFolder === out, 'config defaultFolder should follow the working directory')
+  assert(configResult.body.pythonOk === true, 'the bridge ping must succeed')
+  assert(/visio_bridge/.test(configResult.body.engine), 'config engine tag missing')
+
+  const drawing = join(out, 'Route contract.vsdx')
+  // the engine's create takes dir+name (master's suite used the old dir+title signature)
+  const created = await invoke(opRoute, post({ action: 'create', dir: out, name: 'Route contract', width: 11, height: 8.5 }))
+  assert(created.status === 200 && created.body.ok === true, 'create via /op failed: ' + JSON.stringify(created.body))
+  assert(existsSync(drawing), 'the drawing was not written')
+
+  const opened = await invoke(opRoute, post({ action: 'open', path: drawing }))
+  assert(opened.status === 200 && opened.body.ok === true, 'open via /op failed')
+  // an empty page has no shape groups yet; add one, then the svg must carry ids
+  const added = await invoke(opRoute, post({ action: 'add_shape', path: drawing, kind: 'rect', x: 1, y: 4, w: 2, h: 1, text: 'A' }))
+  assert(added.status === 200 && added.body.ok === true, 'add_shape via /op failed: ' + JSON.stringify(added.body))
+  assert(typeof added.body.svg === 'string' && added.body.svg.includes('data-shape-id'),
+    'open must return the rendered svg with shape ids')
+
+  const crossOrigin = await invoke(opRoute, post({ action: 'open', path: drawing }, { origin: 'http://evil.example' }))
+  assert(crossOrigin.status === 403, 'a cross-origin op must be refused')
+
+  const badJson = await invoke(opRoute, {
+    method: 'POST',
+    headers: { host: '127.0.0.1:60764' },
+    async *[Symbol.asyncIterator]() { yield Buffer.from('{ not json') },
+  })
+  assert(badJson.status === 400, 'malformed JSON must be a 400')
+
+  const missingPath = await invoke(opRoute, post({ action: 'open' }))
+  assert(missingPath.status === 400 && /path is required/.test(missingPath.body.error ?? ''),
+    'open without a path must fail with "path is required"')
+
+  const wrongMethod = await invoke(configRoute, { method: 'POST', headers: {} })
+  assert(wrongMethod.status === 405, 'config must refuse POST')
+
+  const relative = await invoke(opRoute, post({ action: 'open', path: 'Route contract.vsdx' }))
+  assert(relative.status === 200 && relative.body.name === 'Route contract.vsdx',
+    'a relative path must resolve against the default folder')
+
+  rmSync(out, { recursive: true, force: true })
 })
 
 let bad = 0

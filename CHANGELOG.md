@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.24.2 (2026-11-24)
+
+- **Panel UI polish**: the header now groups its actions, shows the Agent switch as a
+  status pill and treats undo/redo as icons; list selection is a tint with a left rule
+  instead of a solid blue block; status errors are dismissible chips. The empty canvas is
+  a landing card with one primary action, and the inspector has a sticky shape header,
+  two-column geometry fields, segmented line-pattern/route pickers and a compact delete row.
+- **Agent tool switch**: the panel header now has an `Agent` toggle that registers or
+  unregisters the `visio` drawing tool at runtime (persisted in `~/.dsh/visio-agent.json`);
+  `agentTool: false` in the plugin config disables it by default. Panel editing is unaffected.
+- **Floating launcher reworked to the UART plugin's three-state orb**: a 44px
+  round ball that expands into a labelled capsule on hover and opens the floating
+  canvas on click. Its position is stored as a viewport fraction, so resizing the
+  DSH window keeps it in the same relative place instead of pressing it into the
+  bottom-right corner where other overlays' balls sit. Drag still moves it; the
+  default anchor is 24px from the right and 96px from the bottom.
+
 ## 1.24.1 (2026-11-16)
 
 - **Ellipse geometry fixed**: the Ellipse row wrote A/B radii swapped, so a

@@ -120,6 +120,10 @@ const empty = render(panel, { t: (key) => key, pickFolder: async () => null })
 const emptyText = textOf(empty)
 assert.ok(emptyText.includes('noDocTitle'), 'empty state should show the "no document" title')
 assert.ok(findAll(empty, (n) => n.props?.className === 'dshv-empty').length >= 1)
+assert.equal(findAll(empty, (n) => n.props?.className === 'dshv-emptyCard').length, 1,
+  'empty state should be a card, not bare body copy')
+assert.ok(findAll(empty, (n) => n.props?.className === 'dshv-emptyIcon').length >= 1,
+  'empty state icon tile missing')
 
 // ---- 2. loaded drawing + inspector ---------------------------------------
 const state = {
@@ -150,11 +154,17 @@ const state = {
 // Hook order of VisioPanel: config, configError, folder, folderDraft, files, filesBusy,
 // filesError, doc, selected, busy, error, notice, tab, createOpen.
 const config = { ok: true, defaultFolder: state.folder, folderOk: true, python: 'python', pythonOk: true, engine: 'visio_bridge/1.0.0' }
-seeded = [config, '', state.folder, state.folder, [], false, '', state, '1', false, '', '', 'shapes', true, false, false]
+seeded = [config, '', state.folder, state.folder, [], false, '', true, state, '1', false, '', '', 'shapes', true, false, false]
 const loadedTree = render(panel, { t: (key) => key, pickFolder: async () => null })
 const loadedText = textOf(loadedTree)
 assert.ok(loadedText.includes('demo.vsdx'), 'header should show the file name')
 assert.ok(loadedText.includes('shapeData'), 'inspector sections should render')
+assert.equal(findAll(loadedTree, (n) => n.props?.className === 'dshv-inspHead').length, 1,
+  'inspector should have a sticky shape header')
+assert.ok(findAll(loadedTree, (n) => String(n.props?.className || '').includes('dshv-grid2')).length >= 1,
+  'geometry should use the two-column grid')
+assert.equal(findAll(loadedTree, (n) => String(n.props?.className || '').startsWith('dshv-segBtn')).length, 5,
+  'line-pattern segmented control should have five choices')
 assert.ok(findAll(loadedTree, (n) => n.props?.className === 'dshv-page').length >= 1, 'preview page missing')
 const injected = findAll(loadedTree, (n) => n.props?.dangerouslySetInnerHTML?.__html?.includes('data-shape-id'))
 assert.equal(injected.length, 1, 'preview svg should be injected once')
@@ -168,7 +178,7 @@ const propInputs = findAll(loadedTree, (n) => n.type === 'input' && n.props?.def
 assert.equal(propInputs.length, 1, 'shape-data row missing')
 
 // ---- 3. create dialog -----------------------------------------------------
-seeded = [config, '', state.folder, state.folder, [], false, '', null, null, false, '', '', 'shapes', true, false, true]
+seeded = [config, '', state.folder, state.folder, [], false, '', true, null, null, false, '', '', 'shapes', true, false, true]
 const dialogTree = render(panel, { t: (key) => key, pickFolder: async () => null })
 assert.ok(findAll(dialogTree, (n) => n.props?.className === 'dshv-dialog').length === 1, 'create dialog missing')
 assert.ok(textOf(dialogTree).includes('createTitle'))
@@ -183,12 +193,12 @@ console.log('ok — panel, inspector, dialog and icon all render')
 // ---- 5. floating canvas window -------------------------------------------
 const floatComp = calls.slots.find((slot) => slot.name === 'shell.overlay')?.component
 assert.ok(floatComp, 'floating canvas component not captured')
-seeded = [true, { x: 40, y: 60, w: 720, h: 480 }]
+seeded = [true, { fx: 0.9, fy: 0.8 }, false, 160, { x: 40, y: 60, w: 720, h: 480 }]
 const floated = render(floatComp, { t: (key) => key, pickFolder: async () => null })
 assert.equal(findAll(floated, (node) => node.props?.className === 'dshv-floatBar').length, 1, 'floating title bar missing')
 assert.equal(findAll(floated, (node) => node.props?.className === 'dshv-float').length, 1, 'floating window missing')
 
-seeded = [false, { x: 0, y: 0, w: 600, h: 400 }]
+seeded = [false, { fx: 0.9, fy: 0.8 }, false, 160, { x: 0, y: 0, w: 600, h: 400 }]
 const fabOnly = render(floatComp, { t: (key) => key, pickFolder: async () => null })
 assert.equal(findAll(fabOnly, (node) => node.props?.className === 'dshv-float').length, 0, 'closed window should not render')
 assert.equal(findAll(fabOnly, (node) => node.props?.className === 'dshv-fab').length, 1, 'launcher missing')

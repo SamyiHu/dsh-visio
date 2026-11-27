@@ -36,9 +36,8 @@
           "version": "1.24.1",
           "publishTimestamp": 1794791666,
           "source": {
-            "type": "git",
-            "url": "https://github.com/SamyiHu/dsh-visio",
-            "commit": "24e0c0d453837dbbd9ebc73cbcc47fb4a150cf9c"
+            "type": "npm",
+            "package": "dsh-visio"
           },
           "engines": {
             "dsh": ">=0.2.1-rc.1 <0.3.0-0"

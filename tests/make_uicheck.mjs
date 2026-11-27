@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 
 const here = new URL('.', import.meta.url)
 const src = readFileSync(new URL('../client.js', here), 'utf8')
-const order = ['CSS', 'CSS_POLISH', 'CSS_FLOAT']
+const order = ['CSS', 'CSS_POLISH', 'CSS_FLOAT', 'CSS_REFRESH']
 const blocks = order.map((name) => {
   const marker = 'const ' + name + ' = `'
   const start = src.indexOf(marker)
@@ -22,9 +22,9 @@ html,body{margin:0;background:#fff;font:13px system-ui,sans-serif}
 <div class="frame">
   <div class="dshv-section">
     <div class="dshv-sectionTitle">位置与大小</div>
-    <div class="dshv-grid4">
+    <div class="dshv-grid2">
       ${['X', 'Y', '宽', '高'].map((l, i) => `<div class="dshv-col">
-        <div style="font-size:10px;color:#888;margin-bottom:2px">${l}</div>
+        <div class="dshv-colLabel">${l}</div>
         <input class="dshv-input" value="${['-0.574', '12.548', '10.693', '0.75'][i]}">
       </div>`).join('')}
     </div>
@@ -39,8 +39,8 @@ html,body{margin:0;background:#fff;font:13px system-ui,sans-serif}
   window.measure = () => {
     const q = (s) => Array.from(document.querySelectorAll(s))
     return JSON.stringify({
-      inputs: q('.dshv-grid4 .dshv-input').map((e) => Math.round(e.getBoundingClientRect().width)),
-      grid: Math.round(document.querySelector('.dshv-grid4').getBoundingClientRect().width),
+      inputs: q('.dshv-grid2 .dshv-input').map((e) => Math.round(e.getBoundingClientRect().width)),
+      grid: Math.round(document.querySelector('.dshv-grid2').getBoundingClientRect().width),
       textarea: Math.round(document.querySelector('textarea').getBoundingClientRect().width),
       textareaH: Math.round(document.querySelector('textarea').getBoundingClientRect().height),
       overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,

@@ -14,7 +14,8 @@
  */
 import { spawn } from 'node:child_process'
 import { access } from 'node:fs/promises'
-import { readdirSync, statSync, readFileSync } from 'node:fs'
+import { readdirSync, statSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -1050,6 +1051,26 @@ function buildHandlers(ctx, config) {
   }
 }
 
+const AGENT_PREF = join(homedir(), '.dsh', 'visio-agent.json')
+
+function readAgentPref() {
+  try {
+    const saved = JSON.parse(readFileSync(AGENT_PREF, 'utf8'))
+    return saved.enabled !== false
+  } catch {
+    return true
+  }
+}
+
+function writeAgentPref(enabled) {
+  try {
+    mkdirSync(dirname(AGENT_PREF), { recursive: true })
+    writeFileSync(AGENT_PREF, JSON.stringify({ enabled: !!enabled }, null, 2), 'utf8')
+  } catch {
+    /* preference is best-effort */
+  }
+}
+
 function registerAgentTool(ctx, config) {
   const tools = ctx.get('tools') ?? ctx.tools
   if (typeof tools?.register !== 'function') return undefined
@@ -1089,18 +1110,40 @@ function registerAgentTool(ctx, config) {
 
 export function apply(ctx, config = {}) {
   ctx.effect(() => () => disposePools(), 'dsh-visio: bridge pool')
-  ctx.inject(['tools'], (toolCtx) => {
-    toolCtx.effect(() => {
+
+  // The drawing tool is optional: some people want the panel only.  The switch
+  // lives in the panel header; the choice is persisted under ~/.dsh.
+  const agentState = { enabled: config.agentTool === false ? false : readAgentPref(), dispose: null }
+  let toolCtxRef = null
+  const syncAgentTool = () => {
+    if (toolCtxRef === null) return
+    if (agentState.enabled) {
+      if (agentState.dispose !== null) return
       try {
-        const dispose = registerAgentTool(toolCtx, config)
-        return typeof dispose === 'function' ? dispose : () => {}
+        const dispose = registerAgentTool(toolCtxRef, config)
+        agentState.dispose = typeof dispose === 'function' ? dispose : null
       } catch (error) {
         try {
-          toolCtx.logger('dsh-visio').warn(`agent tool not registered: ${messageOf(error)}`)
+          toolCtxRef.logger('dsh-visio').warn(`agent tool not registered: ${messageOf(error)}`)
         } catch {
           /* logging is optional */
         }
-        return () => {}
+      }
+    } else if (agentState.dispose !== null) {
+      try { agentState.dispose() } catch { /* ignore */ }
+      agentState.dispose = null
+    }
+  }
+  ctx.inject(['tools'], (toolCtx) => {
+    toolCtxRef = toolCtx
+    toolCtx.effect(() => {
+      syncAgentTool()
+      return () => {
+        if (agentState.dispose !== null) {
+          try { agentState.dispose() } catch { /* ignore */ }
+        }
+        agentState.dispose = null
+        toolCtxRef = null
       }
     }, 'dsh-visio: agent tool')
   })
@@ -1133,6 +1176,20 @@ export function apply(ctx, config = {}) {
           pythonOk,
           engine: `visio_bridge/${pkg.version}`,
         })
+      }),
+      route(ctx, `${ROUTE_PREFIX}/agent`, ['GET'], async ({ response }) => {
+        json(response, 200, { ok: true, enabled: agentState.enabled })
+      }),
+      route(ctx, `${ROUTE_PREFIX}/agent`, ['POST'], async ({ request, response }) => {
+        if (!sameOrigin(request)) {
+          json(response, 403, { ok: false, error: 'Cross-origin request refused.' })
+          return
+        }
+        const body = await readBody(request)
+        agentState.enabled = body.enabled !== false
+        writeAgentPref(agentState.enabled)
+        syncAgentTool()
+        json(response, 200, { ok: true, enabled: agentState.enabled })
       }),
       route(ctx, `${ROUTE_PREFIX}/op`, ['POST'], async ({ request, response }) => {
         if (!sameOrigin(request)) {
